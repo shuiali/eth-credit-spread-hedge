@@ -12,6 +12,7 @@ from eth_credit_hedge.domain.execution import (
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
+from eth_credit_hedge.domain.live_recovery import RecoveryDebtSnapshot
 
 
 class ExecutionPersistencePort(Protocol):
@@ -126,3 +127,19 @@ class ExecutionPersistencePort(Protocol):
     async def has_execution(self, execution_id: str) -> bool: ...
 
     async def load_all_executions(self) -> tuple[ExecutionUpdate, ...]: ...
+
+    async def persist_recovery_debt_snapshot(
+        self,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None: ...
+
+    async def load_recovery_debt_snapshot(
+        self,
+        level_id: int,
+    ) -> RecoveryDebtSnapshot | None: ...
+
+    async def transition_recovery_debt_snapshot(
+        self,
+        previous_version: int,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None: ...

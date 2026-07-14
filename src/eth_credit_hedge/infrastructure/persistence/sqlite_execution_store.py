@@ -24,6 +24,10 @@ from eth_credit_hedge.domain.execution import (
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
+from eth_credit_hedge.domain.live_recovery import (
+    RecoveryDebtSnapshot,
+    RecoveryDebtState,
+)
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -91,11 +95,24 @@ CREATE TABLE IF NOT EXISTS protection_snapshots (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS recovery_debts (
+    level_id INTEGER PRIMARY KEY,
+    projected_debt TEXT NOT NULL,
+    confirmed_debt TEXT NOT NULL,
+    allocated_debt TEXT NOT NULL,
+    remaining_debt TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (2, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (4, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -319,6 +336,29 @@ class SqliteExecutionStore:
 
     async def load_all_executions(self) -> tuple[ExecutionUpdate, ...]:
         return await asyncio.to_thread(self._load_all_executions)
+
+    async def persist_recovery_debt_snapshot(
+        self,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None:
+        await asyncio.to_thread(self._persist_recovery_debt_snapshot, snapshot)
+
+    async def load_recovery_debt_snapshot(
+        self,
+        level_id: int,
+    ) -> RecoveryDebtSnapshot | None:
+        return await asyncio.to_thread(self._load_recovery_debt_snapshot, level_id)
+
+    async def transition_recovery_debt_snapshot(
+        self,
+        previous_version: int,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None:
+        await asyncio.to_thread(
+            self._transition_recovery_debt_snapshot,
+            previous_version,
+            snapshot,
+        )
 
     async def execution_count(self) -> int:
         return await asyncio.to_thread(self._execution_count)
@@ -663,6 +703,67 @@ class SqliteExecutionStore:
             ).fetchall()
         return tuple(_execution_from_row(row) for row in rows)
 
+    def _persist_recovery_debt_snapshot(
+        self,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO recovery_debts(
+                        level_id, projected_debt, confirmed_debt,
+                        allocated_debt, remaining_debt, version, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    _recovery_debt_values(snapshot),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("recovery debt snapshot already exists") from exc
+
+    def _load_recovery_debt_snapshot(
+        self,
+        level_id: int,
+    ) -> RecoveryDebtSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM recovery_debts WHERE level_id = ?",
+                (level_id,),
+            ).fetchone()
+        return None if row is None else _recovery_debt_from_row(row)
+
+    def _transition_recovery_debt_snapshot(
+        self,
+        previous_version: int,
+        snapshot: RecoveryDebtSnapshot,
+    ) -> None:
+        if snapshot.version != previous_version + 1:
+            raise ValueError("new debt version must increment exactly once")
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE recovery_debts
+                SET projected_debt = ?, confirmed_debt = ?,
+                    allocated_debt = ?, remaining_debt = ?, version = ?,
+                    updated_at = ?
+                WHERE level_id = ? AND version = ?
+                """,
+                (
+                    str(snapshot.debt.projected_debt),
+                    str(snapshot.debt.confirmed_debt),
+                    str(snapshot.debt.allocated_debt),
+                    str(snapshot.debt.remaining_debt),
+                    snapshot.version,
+                    snapshot.updated_at.isoformat(),
+                    snapshot.level_id,
+                    previous_version,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ConcurrentSnapshotUpdateError(
+                    "recovery debt version changed before transaction commit"
+                )
+
     def _execution_count(self) -> int:
         with self._connect() as connection:
             row = connection.execute("SELECT COUNT(*) AS count FROM executions").fetchone()
@@ -876,6 +977,34 @@ def _protection_from_row(row: sqlite3.Row) -> ProtectionSnapshot:
         ),
         pending_terminal_state=(
             None if pending is None else LiveExecutionState(str(pending))
+        ),
+        version=int(row["version"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
+
+
+def _recovery_debt_values(
+    snapshot: RecoveryDebtSnapshot,
+) -> tuple[object, ...]:
+    return (
+        snapshot.level_id,
+        str(snapshot.debt.projected_debt),
+        str(snapshot.debt.confirmed_debt),
+        str(snapshot.debt.allocated_debt),
+        str(snapshot.debt.remaining_debt),
+        snapshot.version,
+        snapshot.updated_at.isoformat(),
+    )
+
+
+def _recovery_debt_from_row(row: sqlite3.Row) -> RecoveryDebtSnapshot:
+    return RecoveryDebtSnapshot(
+        level_id=int(row["level_id"]),
+        debt=RecoveryDebtState(
+            projected_debt=Decimal(str(row["projected_debt"])),
+            confirmed_debt=Decimal(str(row["confirmed_debt"])),
+            allocated_debt=Decimal(str(row["allocated_debt"])),
+            remaining_debt=Decimal(str(row["remaining_debt"])),
         ),
         version=int(row["version"]),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),

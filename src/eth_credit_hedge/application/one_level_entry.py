@@ -43,11 +43,32 @@ class OneLevelEntryService:
         self,
         request: PlaceOrderRequest,
     ) -> EntryExecutionSnapshot:
+        snapshot = await self.persist_entry_intent(request)
+        return await self.submit_persisted_entry(request, snapshot)
+
+    async def persist_entry_intent(
+        self,
+        request: PlaceOrderRequest,
+    ) -> EntryExecutionSnapshot:
         persisted_at = self._clock()
         snapshot = EntryExecutionSnapshot.for_intent(request, persisted_at)
         await self._store.persist_entry_intent(request, snapshot, persisted_at)
         self._active_order_link_id = request.order_link_id
+        return snapshot
 
+    async def submit_persisted_entry(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: EntryExecutionSnapshot,
+    ) -> EntryExecutionSnapshot:
+        if snapshot.order_link_id != request.order_link_id:
+            raise ValueError("request and persisted entry client IDs differ")
+        if snapshot.state is not LiveExecutionState.ENTRY_REQUEST_PERSISTED:
+            raise ValueError("entry snapshot is not ready for submission")
+        persisted_request = await self._store.load_order_intent(request.order_link_id)
+        if persisted_request != request:
+            raise ValueError("entry request is not durably persisted")
+        self._active_order_link_id = request.order_link_id
         submitted = transition_entry_snapshot(
             snapshot,
             LiveExecutionState.ENTRY_SUBMITTED,

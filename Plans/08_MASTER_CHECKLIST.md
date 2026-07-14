@@ -102,18 +102,18 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Active-level limit.
 - [x] Stale-data veto.
 - [x] Reconciliation veto.
-- [ ] Explicit locked-level policy.
+- [x] Explicit locked-level policy.
 
 ## Multiple levels and recovery
 
 - [ ] Multiple baseline levels on demo.
-- [ ] Concurrent exits.
-- [ ] Shared boundaries.
-- [ ] Local full-next-TP recovery.
-- [ ] Actual debt.
-- [ ] Quantized recovery.
-- [ ] Risk rejection handled.
-- [ ] Distributed recovery remains disabled.
+- [x] Concurrent exits.
+- [x] Shared boundaries.
+- [x] Local full-next-TP recovery.
+- [x] Actual debt.
+- [x] Quantized recovery.
+- [x] Risk rejection handled.
+- [x] Distributed recovery remains disabled.
 
 ## Realistic simulation
 

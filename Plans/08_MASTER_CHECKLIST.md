@@ -4,13 +4,13 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Repository
 
-- [ ] Installable `src` package.
-- [ ] Missing fixtures restored.
-- [ ] Baseline tagged.
-- [ ] Baseline specification committed.
-- [ ] Baseline defaults enforced.
-- [ ] Experimental modes separated.
-- [ ] All tests pass from fresh clone.
+- [x] Installable `src` package.
+- [x] Missing fixtures restored.
+- [x] Baseline tagged.
+- [x] Baseline specification committed.
+- [x] Baseline defaults enforced.
+- [x] Experimental modes separated.
+- [x] All tests pass from fresh clone.
 - [ ] Lint, types and CI pass.
 
 ## Option position

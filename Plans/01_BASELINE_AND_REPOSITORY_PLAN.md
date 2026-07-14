@@ -232,13 +232,13 @@ Parse environment variables once into a typed config object.
 
 ## Acceptance gate
 
-- [ ] Fresh clone installs.
-- [ ] Fixture is present.
-- [ ] No manual `PYTHONPATH` manipulation.
-- [ ] All deterministic scenarios pass.
-- [ ] All pytest tests pass.
-- [ ] Lint passes.
-- [ ] Core type checks pass.
-- [ ] Baseline defaults are enforced.
-- [ ] Experimental modes cannot activate accidentally.
-- [ ] Baseline tag and specification exist.
+- [x] Fresh clone installs.
+- [x] Fixture is present.
+- [x] No manual `PYTHONPATH` manipulation.
+- [x] All deterministic scenarios pass.
+- [x] All pytest tests pass.
+- [x] Lint passes.
+- [x] Core type checks pass.
+- [x] Baseline defaults are enforced.
+- [x] Experimental modes cannot activate accidentally.
+- [x] Baseline tag and specification exist.

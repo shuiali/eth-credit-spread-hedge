@@ -43,15 +43,15 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Private adapter
 
-- [ ] Authentication.
-- [ ] Time sync.
-- [ ] Place/amend/cancel.
-- [ ] Open orders/history.
-- [ ] Positions/wallet.
-- [ ] Private order stream.
-- [ ] Execution stream.
-- [ ] Position stream.
-- [ ] Idempotent client IDs.
+- [x] Authentication.
+- [x] Time sync.
+- [x] Place/amend/cancel.
+- [x] Open orders/history.
+- [x] Positions/wallet.
+- [x] Private order stream.
+- [x] Execution stream.
+- [x] Position stream.
+- [x] Idempotent client IDs.
 - [ ] Execution deduplication.
 
 ## One-level demo

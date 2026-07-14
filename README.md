@@ -24,8 +24,10 @@ ETH put credit spread with virtual short-perpetual levels.
 - Bybit option/perpetual filters, side-aware quantization, and order validation.
 - Supervised public ticker/trade/order-book streams with freshness gating.
 - Normalized hashed JSONL capture for ETH perpetual and selected option data.
+- Demo-bound private signing, time sync, account reads, and WebSocket events.
+- Read-only startup snapshots that block unexplained orders or positions.
 
-Perpetual execution fees, slippage, funding, exchange order placement,
+Perpetual execution fees, slippage, funding, automated exchange order placement,
 automatic spread selection, IV repricing, and live trading remain intentionally
 excluded.
 
@@ -118,6 +120,27 @@ python capture_market_data.py `
 The deployment trigger source is locked to `ETHUSDT` last trades. Connection
 generations fence off late events after reconnect, and a fresh snapshot is
 required before an order book becomes synchronized again.
+
+## Bybit demo private read-only check
+
+Private access is fixed to Bybit demo hosts and loads only these variables from
+the ignored `.env` file:
+
+```text
+BYBIT_API_KEY_DEMO
+BYBIT_API_SECRET_DEMO
+```
+
+Run the opt-in account/stream verification without placing orders:
+
+```powershell
+$env:RUN_BYBIT_DEMO_READ_ONLY="1"
+python -m pytest -q tests/test_live_bybit_demo.py
+```
+
+The private stream remains blocked for new entries until a clock-synchronized
+REST snapshot of orders, executions, positions, and wallet state reconciles the
+current connection generation.
 
 ## Distributed recovery convention
 

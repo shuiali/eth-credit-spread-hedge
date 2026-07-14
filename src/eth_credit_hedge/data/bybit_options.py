@@ -313,8 +313,8 @@ def _parse_quote(
     item = timed_ticker.item
     if str(item["symbol"]) != contract.symbol:
         raise ValueError("ticker and instrument symbols differ")
-    bid = _optional_decimal(item, "bid1Price")
-    ask = _optional_decimal(item, "ask1Price")
+    bid, bid_size = _top_level(item, "bid1Price", "bid1Size")
+    ask, ask_size = _top_level(item, "ask1Price", "ask1Size")
     mark = to_decimal(item["markPrice"])
     if mark < ZERO:
         raise ValueError(f"negative quote for {contract.symbol}")
@@ -322,9 +322,9 @@ def _parse_quote(
         symbol=contract.symbol,
         timestamp_utc=timed_ticker.timestamp_utc,
         bid_price=bid,
-        bid_size=_optional_decimal(item, "bid1Size"),
+        bid_size=bid_size,
         ask_price=ask,
-        ask_size=_optional_decimal(item, "ask1Size"),
+        ask_size=ask_size,
         mark_price=mark,
         index_price=to_decimal(item["indexPrice"]),
         underlying_price=to_decimal(item["underlyingPrice"]),
@@ -350,6 +350,24 @@ def _optional_decimal(item: dict[str, Any], key: str) -> Decimal | None:
     if value in (None, ""):
         return None
     return to_decimal(value)
+
+
+def _top_level(
+    item: dict[str, Any],
+    price_key: str,
+    size_key: str,
+) -> tuple[Decimal | None, Decimal | None]:
+    price = _optional_decimal(item, price_key)
+    size = _optional_decimal(item, size_key)
+    if size == ZERO:
+        return None, None
+    if price == ZERO:
+        if size is None:
+            return None, None
+        raise ValueError("top-of-book zero price and size must be consistent")
+    if price is None and size is not None:
+        raise ValueError("top-of-book price is missing for nonzero size")
+    return price, size
 
 
 def _parse_symbol(symbol: str) -> tuple[str, date, Decimal, str, str | None]:

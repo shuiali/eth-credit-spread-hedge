@@ -1,5 +1,6 @@
 """Offline fixture and selected-live-structure tests."""
 
+import copy
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -58,6 +59,30 @@ def test_real_fixture_parses_exact_raw_symbol_and_quote_fields() -> None:
     assert long.quote.bid_price == Decimal("29.9")
     assert long.quote.ask_price == Decimal("30.1")
     assert long.quote.mark_price == Decimal("30.0643528")
+
+
+def test_zero_sized_zero_price_top_level_is_normalized_as_missing() -> None:
+    raw = copy.deepcopy(load_option_fixture(FIXTURE))
+    ticker = raw["requests"][1]["response"]["result"]["list"][0]
+    ticker["ask1Price"] = "0"
+    ticker["ask1Size"] = "0"
+
+    by_symbol = {entry.symbol: entry for entry in parse_option_fixture(raw)}
+    quote = by_symbol["ETH-31JUL26-1750-P-USDT"].quote
+
+    assert quote.ask_price is None
+    assert quote.ask_size is None
+    assert quote.bid_price == Decimal("62.4")
+
+
+def test_zero_price_with_nonzero_size_is_rejected_as_inconsistent() -> None:
+    raw = copy.deepcopy(load_option_fixture(FIXTURE))
+    ticker = raw["requests"][1]["response"]["result"]["list"][0]
+    ticker["ask1Price"] = "0"
+    ticker["ask1Size"] = "1"
+
+    with pytest.raises(ValueError, match="zero price and size"):
+        parse_option_fixture(raw)
 
 
 def test_selected_quotes_build_the_validated_credit_spread_exactly() -> None:

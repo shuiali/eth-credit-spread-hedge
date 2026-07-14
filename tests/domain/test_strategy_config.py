@@ -11,6 +11,7 @@ from eth_credit_hedge.config import (
     RuntimeEnvironment,
     StrategyConfig,
 )
+from eth_credit_hedge.domain.market_data import TriggerPriceSource
 
 
 def test_baseline_factory_freezes_validated_strategy_defaults() -> None:
@@ -87,3 +88,13 @@ def test_runtime_config_parses_environment_mapping_once() -> None:
 
     assert config.environment is RuntimeEnvironment.DEMO
     assert config.strategy == StrategyConfig.baseline(level_count=4)
+    assert config.trigger_price_source is TriggerPriceSource.LAST_TRADE
+
+
+def test_deployment_config_rejects_mixed_trigger_source() -> None:
+    with pytest.raises(ValueError, match="LAST_TRADE"):
+        RuntimeConfig(
+            environment=RuntimeEnvironment.DEMO,
+            strategy=StrategyConfig.baseline(),
+            trigger_price_source=TriggerPriceSource.MARK_PRICE,
+        )

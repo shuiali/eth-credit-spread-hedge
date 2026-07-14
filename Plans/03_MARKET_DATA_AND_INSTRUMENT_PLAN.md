@@ -208,11 +208,11 @@ missing optional Greeks
 
 ## Acceptance gate
 
-- [ ] Option and perpetual constraints parse.
-- [ ] All requests pass quantization.
-- [ ] Risk recalculates after quantization.
-- [ ] One trigger source is declared.
-- [ ] WebSocket reconnect restores state.
-- [ ] New snapshots reset local books.
-- [ ] Stale data blocks new trading.
-- [ ] Normalized capture works.
+- [x] Option and perpetual constraints parse.
+- [x] All requests pass quantization.
+- [x] Risk recalculates after quantization.
+- [x] One trigger source is declared.
+- [x] WebSocket reconnect restores state.
+- [x] New snapshots reset local books.
+- [x] Stale data blocks new trading.
+- [x] Normalized capture works.

@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 
+from eth_credit_hedge.domain.market_data import (
+    DEFAULT_TRIGGER_PRICE_SOURCE,
+    TriggerPriceSource,
+)
+
 
 class RecoveryMode(str, Enum):
     FULL_NEXT_TP = "FULL_NEXT_TP"
@@ -86,16 +91,26 @@ class RuntimeConfig:
 
     environment: RuntimeEnvironment = RuntimeEnvironment.BACKTEST
     strategy: StrategyConfig = field(default_factory=StrategyConfig.baseline)
+    trigger_price_source: TriggerPriceSource = DEFAULT_TRIGGER_PRICE_SOURCE
 
     def __post_init__(self) -> None:
         environment = RuntimeEnvironment(self.environment)
         object.__setattr__(self, "environment", environment)
+        trigger_source = TriggerPriceSource(self.trigger_price_source)
+        object.__setattr__(self, "trigger_price_source", trigger_source)
         if environment is not RuntimeEnvironment.BACKTEST and (
             self.strategy.recovery_mode is not RecoveryMode.FULL_NEXT_TP
             or self.strategy.lock_policy is not LockPolicy.UNHEDGED
         ):
             raise ValueError(
                 "demo, shadow, and production require FULL_NEXT_TP and UNHEDGED"
+            )
+        if (
+            environment is not RuntimeEnvironment.BACKTEST
+            and trigger_source is not TriggerPriceSource.LAST_TRADE
+        ):
+            raise ValueError(
+                "demo, shadow, and production require LAST_TRADE trigger source"
             )
 
     @classmethod
@@ -128,4 +143,14 @@ class RuntimeConfig:
         environment = RuntimeEnvironment(
             values.get("ETH_HEDGE_ENVIRONMENT", RuntimeEnvironment.BACKTEST.value).lower()
         )
-        return cls(environment=environment, strategy=strategy)
+        trigger_price_source = TriggerPriceSource(
+            values.get(
+                "ETH_HEDGE_TRIGGER_PRICE_SOURCE",
+                DEFAULT_TRIGGER_PRICE_SOURCE.value,
+            ).upper()
+        )
+        return cls(
+            environment=environment,
+            strategy=strategy,
+            trigger_price_source=trigger_price_source,
+        )

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "eth-credit-spread-hedge"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["matplotlib>=3.8"]
+dependencies = ["matplotlib>=3.8", "websockets>=15,<16"]
 
 [project.optional-dependencies]
 dev = [
@@ -18,6 +18,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+eth_credit_hedge = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -36,4 +39,7 @@ files = [
     "src/eth_credit_hedge/core",
     "src/eth_credit_hedge/data",
     "src/eth_credit_hedge/domain",
+    "src/eth_credit_hedge/infrastructure/bybit",
+    "src/eth_credit_hedge/infrastructure/recording",
+    "src/eth_credit_hedge/ports",
 ]

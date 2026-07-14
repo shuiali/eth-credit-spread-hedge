@@ -10,6 +10,7 @@ from typing import Literal
 
 OptionType = Literal["Put", "Call"]
 OrderSide = Literal["Buy", "Sell"]
+InstrumentCategory = Literal["option", "linear"]
 
 
 def _decimal(value: Decimal, field_name: str) -> Decimal:
@@ -179,3 +180,104 @@ class OptionFill:
             "timestamp_utc",
             _utc(self.timestamp_utc, "fill timestamp"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PriceFilter:
+    tick_size: Decimal
+    min_price: Decimal | None
+    max_price: Decimal | None
+
+    def __post_init__(self) -> None:
+        tick_size = _decimal(self.tick_size, "tick size")
+        min_price = _optional_decimal(self.min_price, "minimum price")
+        max_price = _optional_decimal(self.max_price, "maximum price")
+        if tick_size <= 0:
+            raise ValueError("tick size must be positive")
+        if min_price is not None and min_price < 0:
+            raise ValueError("minimum price cannot be negative")
+        if max_price is not None and max_price <= 0:
+            raise ValueError("maximum price must be positive")
+        if (
+            min_price is not None
+            and max_price is not None
+            and min_price > max_price
+        ):
+            raise ValueError("minimum price cannot exceed maximum price")
+        object.__setattr__(self, "tick_size", tick_size)
+        object.__setattr__(self, "min_price", min_price)
+        object.__setattr__(self, "max_price", max_price)
+
+
+@dataclass(frozen=True, slots=True)
+class LotSizeFilter:
+    qty_step: Decimal
+    min_order_qty: Decimal
+    max_order_qty: Decimal
+    max_market_order_qty: Decimal | None
+    min_notional: Decimal | None
+
+    def __post_init__(self) -> None:
+        qty_step = _decimal(self.qty_step, "quantity step")
+        min_order_qty = _decimal(self.min_order_qty, "minimum order quantity")
+        max_order_qty = _decimal(self.max_order_qty, "maximum order quantity")
+        max_market_order_qty = _optional_decimal(
+            self.max_market_order_qty,
+            "maximum market order quantity",
+        )
+        min_notional = _optional_decimal(self.min_notional, "minimum notional")
+        if qty_step <= 0:
+            raise ValueError("quantity step must be positive")
+        if min_order_qty <= 0:
+            raise ValueError("minimum order quantity must be positive")
+        if max_order_qty < min_order_qty:
+            raise ValueError("maximum order quantity cannot be below minimum")
+        if max_market_order_qty is not None and max_market_order_qty <= 0:
+            raise ValueError("maximum market order quantity must be positive")
+        if min_notional is not None and min_notional <= 0:
+            raise ValueError("minimum notional must be positive")
+        object.__setattr__(self, "qty_step", qty_step)
+        object.__setattr__(self, "min_order_qty", min_order_qty)
+        object.__setattr__(self, "max_order_qty", max_order_qty)
+        object.__setattr__(
+            self,
+            "max_market_order_qty",
+            max_market_order_qty,
+        )
+        object.__setattr__(self, "min_notional", min_notional)
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentSpec:
+    symbol: str
+    category: InstrumentCategory
+    status: str
+    base_coin: str
+    quote_coin: str
+    settle_coin: str
+    price_filter: PriceFilter
+    lot_size_filter: LotSizeFilter
+    contract_multiplier: Decimal
+    delivery_time_utc: datetime | None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "symbol",
+            "status",
+            "base_coin",
+            "quote_coin",
+            "settle_coin",
+        ):
+            _require_text(getattr(self, field_name), field_name)
+        if self.category not in ("option", "linear"):
+            raise ValueError("instrument category must be option or linear")
+        multiplier = _decimal(self.contract_multiplier, "contract multiplier")
+        if multiplier <= 0:
+            raise ValueError("contract multiplier must be positive")
+        object.__setattr__(self, "contract_multiplier", multiplier)
+        if self.delivery_time_utc is not None:
+            object.__setattr__(
+                self,
+                "delivery_time_utc",
+                _utc(self.delivery_time_utc, "delivery time"),
+            )

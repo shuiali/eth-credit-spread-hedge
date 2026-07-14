@@ -20,9 +20,14 @@ ETH put credit spread with virtual short-perpetual levels.
 - A calculation-free original-style dashboard with complete risk-detail panels.
 - Fixture-first Bybit ETH option parsing, IV/Greeks, and live-chain integration.
 - Exchange-neutral option contract, quote, fill, and protected-position models.
+- Fill-derived option credit plus separate mark, liquidation, and expiry P&L.
+- Bybit option/perpetual filters, side-aware quantization, and order validation.
+- Supervised public ticker/trade/order-book streams with freshness gating.
+- Normalized hashed JSONL capture for ETH perpetual and selected option data.
 
-Fees, slippage, funding, partial fills, gaps, automatic spread selection, IV
-repricing, and live trading remain intentionally excluded.
+Perpetual execution fees, slippage, funding, exchange order placement,
+automatic spread selection, IV repricing, and live trading remain intentionally
+excluded.
 
 ## Install
 
@@ -97,6 +102,22 @@ Natural bid-minus-ask credit is displayed for transparency but is not fed into
 the strategy. The parser retains bid/ask/mark IV and delta, gamma, vega and
 theta. A 0.1% relative tolerance allows tiny leg-snapshot index differences;
 the engine spot is their average. Larger discrepancies are rejected.
+
+## Public market-data capture
+
+Capture normalized `ETHUSDT` trades, ticker updates, order-book snapshots and
+deltas, plus explicitly selected option tickers, without account credentials:
+
+```powershell
+python capture_market_data.py `
+  --output artifacts/public_market_data.jsonl `
+  --seconds 60 `
+  --option-symbol ETH-31JUL26-1750-P-USDT
+```
+
+The deployment trigger source is locked to `ETHUSDT` last trades. Connection
+generations fence off late events after reconnect, and a fresh snapshot is
+required before an order book becomes synchronized again.
 
 ## Distributed recovery convention
 

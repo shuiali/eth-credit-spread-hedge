@@ -29,17 +29,17 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Instruments and public data
 
-- [ ] Option filters.
-- [ ] Perpetual filters.
-- [ ] Quantization.
-- [ ] Minimum notional.
-- [ ] Risk recalculation after rounding.
-- [ ] Trigger source selected.
-- [ ] Ticker/trade stream.
-- [ ] Order-book snapshot/delta.
-- [ ] Reconnect supervision.
-- [ ] Stale-data gate.
-- [ ] Historical recorder.
+- [x] Option filters.
+- [x] Perpetual filters.
+- [x] Quantization.
+- [x] Minimum notional.
+- [x] Risk recalculation after rounding.
+- [x] Trigger source selected.
+- [x] Ticker/trade stream.
+- [x] Order-book snapshot/delta.
+- [x] Reconnect supervision.
+- [x] Stale-data gate.
+- [x] Historical recorder.
 
 ## Private adapter
 

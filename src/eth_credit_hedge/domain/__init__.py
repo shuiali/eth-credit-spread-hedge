@@ -1,9 +1,12 @@
 """Exchange-neutral strategy domain models."""
 
 from eth_credit_hedge.domain.instruments import (
+    InstrumentSpec,
+    LotSizeFilter,
     OptionContract,
     OptionFill,
     OptionMarketQuote,
+    PriceFilter,
 )
 from eth_credit_hedge.domain.option_lifecycle import (
     OptionEntryPolicy,
@@ -32,4 +35,7 @@ __all__ = [
     "OptionQuoteValidationPolicy",
     "PutCreditSpreadPosition",
     "UnmatchedLongPolicy",
+    "InstrumentSpec",
+    "LotSizeFilter",
+    "PriceFilter",
 ]

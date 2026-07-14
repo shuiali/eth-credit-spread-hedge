@@ -1,6 +1,6 @@
 """Historical replay and Monte Carlo backtesting."""
 
-from backtesting.historical import (
+from eth_credit_hedge.backtesting.historical import (
     Candle,
     HistoricalReplay,
     IntrabarPath,
@@ -9,14 +9,14 @@ from backtesting.historical import (
     replay_candles,
     replay_ticks,
 )
-from backtesting.monte_carlo import (
+from eth_credit_hedge.backtesting.monte_carlo import (
     MonteCarloConfig,
     MonteCarloResult,
     MonteCarloSummary,
     generate_gbm_tick_path,
     run_monte_carlo,
 )
-from backtesting.market_path import expand_price_anchors
+from eth_credit_hedge.backtesting.market_path import expand_price_anchors
 
 __all__ = [
     "Candle",

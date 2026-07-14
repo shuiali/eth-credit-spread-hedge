@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from data.bybit_options import (
+from eth_credit_hedge.data.bybit_options import (
     build_credit_spread_from_quotes,
     load_option_fixture,
     parse_option_fixture,

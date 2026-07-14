@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from core.crossing_engine import (
+from eth_credit_hedge.core.crossing_engine import (
     CrossingEngine,
     CrossingEvent,
     CrossingEventType,

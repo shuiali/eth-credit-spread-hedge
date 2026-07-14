@@ -2,8 +2,8 @@
 
 from decimal import Decimal
 
-from core.credit_spread import CreditSpread
-from core.virtual_levels import LevelState, generate_virtual_levels
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.virtual_levels import LevelState, generate_virtual_levels
 
 
 def make_spread() -> CreditSpread:

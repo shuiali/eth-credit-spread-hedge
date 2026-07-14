@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine
-from core.ledger import LedgerEvent, StrategyResult
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import LedgerEvent, StrategyResult
 
 
 @dataclass(frozen=True, slots=True)

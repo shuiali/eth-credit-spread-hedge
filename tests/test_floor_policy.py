@@ -2,9 +2,10 @@
 
 from decimal import Decimal
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine, LockPolicy
-from core.ledger import LedgerEventType
+from eth_credit_hedge.config import LockPolicy
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import LedgerEventType
 
 
 def make_engine() -> HedgeEngine:

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 
-from visualization.payload import DashboardPayload
+from eth_credit_hedge.visualization.payload import DashboardPayload
 
 
 C_BG = "#0d1117"

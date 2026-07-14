@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from backtesting.monte_carlo import MonteCarloResult
-from core.credit_spread import CreditSpread, ZERO
-from core.ledger import LedgerEventType, StrategyResult
+from eth_credit_hedge.backtesting.monte_carlo import MonteCarloResult
+from eth_credit_hedge.core.credit_spread import CreditSpread, ZERO
+from eth_credit_hedge.core.ledger import LedgerEventType, StrategyResult
 
 
 @dataclass(frozen=True, slots=True)

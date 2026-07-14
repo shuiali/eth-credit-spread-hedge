@@ -6,7 +6,7 @@ import random
 from decimal import Decimal
 from typing import Iterable
 
-from core.credit_spread import DecimalLike, to_decimal
+from eth_credit_hedge.core.credit_spread import DecimalLike, to_decimal
 
 
 def expand_price_anchors(

@@ -18,25 +18,29 @@ def to_decimal(value: DecimalLike) -> Decimal:
     return Decimal(str(value))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class CreditSpread:
     """Same-expiry ETH put credit spread evaluated at terminal value."""
 
-    spot: DecimalLike
-    short_put_strike: DecimalLike
-    long_put_strike: DecimalLike
-    option_quantity: DecimalLike
-    premium_credit: DecimalLike
+    spot: Decimal
+    short_put_strike: Decimal
+    long_put_strike: Decimal
+    option_quantity: Decimal
+    premium_credit: Decimal
 
-    def __post_init__(self) -> None:
-        for field_name in (
-            "spot",
-            "short_put_strike",
-            "long_put_strike",
-            "option_quantity",
-            "premium_credit",
-        ):
-            object.__setattr__(self, field_name, to_decimal(getattr(self, field_name)))
+    def __init__(
+        self,
+        spot: DecimalLike,
+        short_put_strike: DecimalLike,
+        long_put_strike: DecimalLike,
+        option_quantity: DecimalLike,
+        premium_credit: DecimalLike,
+    ) -> None:
+        object.__setattr__(self, "spot", to_decimal(spot))
+        object.__setattr__(self, "short_put_strike", to_decimal(short_put_strike))
+        object.__setattr__(self, "long_put_strike", to_decimal(long_put_strike))
+        object.__setattr__(self, "option_quantity", to_decimal(option_quantity))
+        object.__setattr__(self, "premium_credit", to_decimal(premium_credit))
 
         if self.spot <= ZERO:
             raise ValueError("spot must be positive")

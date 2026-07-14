@@ -8,11 +8,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine
-from visualization import dashboard as dashboard_module
-from visualization.dashboard import C_COMBINED, C_SL, Dashboard
-from visualization.payload import build_dashboard_payload
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.visualization import dashboard as dashboard_module
+from eth_credit_hedge.visualization.dashboard import C_COMBINED, C_SL, Dashboard
+from eth_credit_hedge.visualization.payload import build_dashboard_payload
 
 
 def make_payload():
@@ -45,7 +45,8 @@ def test_dashboard_module_contains_no_strategy_or_backtest_dependency() -> None:
 def test_dashboard_launcher_runs_the_proven_unhedged_baseline() -> None:
     source = inspect.getsource(__import__("dashboard_app"))
 
-    assert "lock_policy=LockPolicy.UNHEDGED" in source
+    assert "StrategyConfig.baseline" in source
+    assert "experimental_floor" not in source
 
 
 def test_dashboard_renders_complete_original_style_panels(tmp_path) -> None:

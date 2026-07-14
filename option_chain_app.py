@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 
-from data.bybit_options import BybitOptionClient, select_put_credit_spread
+from eth_credit_hedge.data.bybit_options import (
+    BybitOptionClient,
+    select_put_credit_spread,
+)
 
 
 def parse_args() -> argparse.Namespace:

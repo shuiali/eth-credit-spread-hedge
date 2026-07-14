@@ -1,6 +1,6 @@
 """Offline-first ETH option-chain integration."""
 
-from data.bybit_options import (
+from eth_credit_hedge.data.bybit_options import (
     BybitOptionClient,
     OptionInstrument,
     OptionQuote,
@@ -21,4 +21,3 @@ __all__ = [
     "parse_option_fixture",
     "select_put_credit_spread",
 ]
-

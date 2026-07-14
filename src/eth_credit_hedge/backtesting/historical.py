@@ -10,9 +10,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable
 
-from core.credit_spread import DecimalLike, to_decimal
-from core.hedge_engine import HedgeEngine
-from core.ledger import StrategyResult
+from eth_credit_hedge.core.credit_spread import DecimalLike, to_decimal
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import StrategyResult
 
 
 class IntrabarPath(str, Enum):
@@ -154,4 +154,3 @@ def _save_ticks(
     payload = {**metadata, "ticks": [str(tick) for tick in ticks]}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
-

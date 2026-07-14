@@ -5,16 +5,16 @@ from decimal import Decimal
 
 import pytest
 
-from backtesting.historical import (
+from eth_credit_hedge.backtesting.historical import (
     Candle,
     IntrabarPath,
     reconstruct_tick_path,
     replay_candles,
 )
-from backtesting.market_path import expand_price_anchors
-from backtesting.monte_carlo import MonteCarloConfig, run_monte_carlo
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine
+from eth_credit_hedge.backtesting.market_path import expand_price_anchors
+from eth_credit_hedge.backtesting.monte_carlo import MonteCarloConfig, run_monte_carlo
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
 
 
 def make_spread() -> CreditSpread:

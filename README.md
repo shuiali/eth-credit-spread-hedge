@@ -23,9 +23,23 @@ ETH put credit spread with virtual short-perpetual levels.
 Fees, slippage, funding, partial fills, gaps, automatic spread selection, IV
 repricing, and live trading remain intentionally excluded.
 
+## Install
+
+The project uses an installable `src` package:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -c "import eth_credit_hedge"
+```
+
+No manual `PYTHONPATH` setting is required.
+
 ## Run the gates
 
 ```powershell
+python -m compileall -q src tests
+ruff check .
+mypy
 python -m pytest -q
 python run_scenarios.py
 ```

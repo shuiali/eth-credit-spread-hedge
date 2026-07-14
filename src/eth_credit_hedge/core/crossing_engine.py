@@ -8,7 +8,7 @@ from enum import Enum
 from collections.abc import Callable
 from typing import Protocol
 
-from core.credit_spread import DecimalLike, to_decimal
+from eth_credit_hedge.core.credit_spread import DecimalLike, to_decimal
 
 
 class Direction(str, Enum):

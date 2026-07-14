@@ -9,10 +9,16 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from backtesting.market_path import expand_price_anchors
-from core.credit_spread import CreditSpread, ZERO, to_decimal
-from core.hedge_engine import HedgeEngine, LockPolicy, RecoveryMode
-from core.ledger import StrategyMetrics, StrategyResult
+from eth_credit_hedge.backtesting.market_path import expand_price_anchors
+from eth_credit_hedge.config import LockPolicy, RecoveryMode
+from eth_credit_hedge.core.credit_spread import (
+    CreditSpread,
+    DecimalLike,
+    ZERO,
+    to_decimal,
+)
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import StrategyMetrics, StrategyResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +109,7 @@ def run_monte_carlo(
     recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
     recovery_tp_count: int = 3,
     lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
+    stop_rate: DecimalLike = "0.0015",
 ) -> MonteCarloResult:
     """Generate, persist, and replay every seeded Monte Carlo tick path."""
     paths: list[tuple[Decimal, ...]] = []
@@ -115,6 +122,7 @@ def run_monte_carlo(
             recovery_mode=recovery_mode,
             recovery_tp_count=recovery_tp_count,
             lock_policy=lock_policy,
+            stop_rate=stop_rate,
         )
         paths.append(path)
         results.append(engine.run_with_accounting(list(path)))
@@ -134,7 +142,10 @@ def run_monte_carlo(
                     "annual_drift": config.annual_drift,
                     "tick_size": str(config.tick_size),
                     "seed": config.seed,
+                    "recovery_mode": RecoveryMode(recovery_mode).value,
+                    "recovery_tp_count": recovery_tp_count,
                     "lock_policy": LockPolicy(lock_policy).value,
+                    "stop_rate": str(to_decimal(stop_rate)),
                 },
                 "paths": [[str(tick) for tick in path] for path in paths],
             },

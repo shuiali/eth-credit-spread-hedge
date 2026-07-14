@@ -4,27 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
-from enum import Enum
 
-from core.credit_spread import CreditSpread, DecimalLike, ZERO, to_decimal
-from core.crossing_engine import (
+from eth_credit_hedge.config import LockPolicy, RecoveryMode, StrategyConfig
+from eth_credit_hedge.core.credit_spread import (
+    CreditSpread,
+    DecimalLike,
+    ZERO,
+    to_decimal,
+)
+from eth_credit_hedge.core.crossing_engine import (
     CrossingEngine,
     CrossingEvent,
     CrossingEventType,
     Direction,
 )
-from core.ledger import AccountingSnapshot, Ledger, LedgerEvent, StrategyResult
-from core.virtual_levels import HedgeLevel, LevelState, generate_virtual_levels
-
-
-class RecoveryMode(str, Enum):
-    FULL_NEXT_TP = "FULL_NEXT_TP"
-    DISTRIBUTED = "DISTRIBUTED"
-
-
-class LockPolicy(str, Enum):
-    UNHEDGED = "UNHEDGED"
-    BREAKEVEN_FLOOR = "BREAKEVEN_FLOOR"
+from eth_credit_hedge.core.ledger import (
+    AccountingSnapshot,
+    Ledger,
+    LedgerEvent,
+    StrategyResult,
+)
+from eth_credit_hedge.core.virtual_levels import (
+    HedgeLevel,
+    LevelState,
+    generate_virtual_levels,
+)
 
 
 class HedgeEngine:
@@ -37,14 +41,24 @@ class HedgeEngine:
         recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
         recovery_tp_count: int = 3,
         lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
+        stop_rate: DecimalLike = "0.0015",
     ) -> None:
-        if recovery_tp_count <= 0:
-            raise ValueError("recovery TP count must be positive")
+        self.config = StrategyConfig(
+            level_count=level_count,
+            stop_rate=to_decimal(stop_rate),
+            recovery_mode=RecoveryMode(recovery_mode),
+            lock_policy=LockPolicy(lock_policy),
+            recovery_tp_count=recovery_tp_count,
+        )
         self.spread = spread
-        self.levels = generate_virtual_levels(spread, level_count)
-        self.recovery_mode = RecoveryMode(recovery_mode)
-        self.recovery_tp_count = recovery_tp_count
-        self.lock_policy = LockPolicy(lock_policy)
+        self.levels = generate_virtual_levels(
+            spread,
+            self.config.level_count,
+            self.config.stop_rate,
+        )
+        self.recovery_mode = self.config.recovery_mode
+        self.recovery_tp_count = self.config.recovery_tp_count
+        self.lock_policy = self.config.lock_policy
         self.ledger = Ledger()
         self.crossings = CrossingEngine()
         self.previous_price: Decimal | None = None

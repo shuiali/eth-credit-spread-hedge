@@ -1,8 +1,9 @@
 """Core strategy primitives."""
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine, LockPolicy, RecoveryMode
-from core.ledger import (
+from eth_credit_hedge.config import LockPolicy, RecoveryMode
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import (
     AccountingSnapshot,
     Ledger,
     LedgerEvent,
@@ -11,7 +12,11 @@ from core.ledger import (
     StrategyMetrics,
     StrategyResult,
 )
-from core.virtual_levels import HedgeLevel, LevelState, generate_virtual_levels
+from eth_credit_hedge.core.virtual_levels import (
+    HedgeLevel,
+    LevelState,
+    generate_virtual_levels,
+)
 
 __all__ = [
     "CreditSpread",

@@ -7,19 +7,20 @@ from decimal import Decimal
 from pathlib import Path
 from collections.abc import Sequence
 
-from backtesting.market_path import expand_price_anchors
-from backtesting.monte_carlo import MonteCarloConfig, run_monte_carlo
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine, LockPolicy
-from data.bybit_options import (
+from eth_credit_hedge.backtesting.market_path import expand_price_anchors
+from eth_credit_hedge.backtesting.monte_carlo import MonteCarloConfig, run_monte_carlo
+from eth_credit_hedge.config import StrategyConfig
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.data.bybit_options import (
     BybitOptionClient,
     QuotedCreditSpread,
     load_option_fixture,
     parse_option_fixture,
     select_put_credit_spread,
 )
-from visualization.dashboard import Dashboard
-from visualization.payload import build_dashboard_payload
+from eth_credit_hedge.visualization.dashboard import Dashboard
+from eth_credit_hedge.visualization.payload import build_dashboard_payload
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -93,10 +94,14 @@ def main() -> None:
         tick_size="0.1",
         seed=args.path_seed,
     )
+    strategy = StrategyConfig.baseline(level_count=args.levels)
     result = HedgeEngine(
         spread,
-        args.levels,
-        lock_policy=LockPolicy.UNHEDGED,
+        strategy.level_count,
+        recovery_mode=strategy.recovery_mode,
+        recovery_tp_count=strategy.recovery_tp_count,
+        lock_policy=strategy.lock_policy,
+        stop_rate=strategy.stop_rate,
     ).run_with_accounting(list(prices))
     monte_carlo = None
     if args.mc_paths:
@@ -105,7 +110,10 @@ def main() -> None:
             args.levels,
             MonteCarloConfig(path_count=args.mc_paths),
             Path("artifacts") / "dashboard_monte_carlo_paths.json",
-            lock_policy=LockPolicy.UNHEDGED,
+            recovery_mode=strategy.recovery_mode,
+            recovery_tp_count=strategy.recovery_tp_count,
+            lock_policy=strategy.lock_policy,
+            stop_rate=strategy.stop_rate,
         )
     payload = build_dashboard_payload(
         spread,

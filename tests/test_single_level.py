@@ -2,10 +2,10 @@
 
 from decimal import Decimal
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine
-from core.ledger import LedgerEventType
-from core.virtual_levels import LevelState
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.ledger import LedgerEventType
+from eth_credit_hedge.core.virtual_levels import LevelState
 
 
 def make_engine() -> HedgeEngine:

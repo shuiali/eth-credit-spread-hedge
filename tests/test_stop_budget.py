@@ -2,9 +2,9 @@
 
 from decimal import Decimal
 
-from core.credit_spread import CreditSpread
-from core.hedge_engine import HedgeEngine
-from core.virtual_levels import LevelState
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.core.virtual_levels import LevelState
 
 
 def test_locked_level_can_still_finish_below_zero_at_max_option_loss() -> None:

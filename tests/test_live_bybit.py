@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from data.bybit_options import BybitOptionClient
+from eth_credit_hedge.data.bybit_options import BybitOptionClient
 
 
 @pytest.mark.live

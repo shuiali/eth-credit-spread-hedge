@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from core.credit_spread import CreditSpread
+from eth_credit_hedge.core.credit_spread import CreditSpread
 
 
 @pytest.fixture

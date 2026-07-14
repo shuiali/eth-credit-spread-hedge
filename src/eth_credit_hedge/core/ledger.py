@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 
-from core.credit_spread import ZERO
-from core.credit_spread import CreditSpread
-from core.virtual_levels import HedgeLevel, LevelState
+from eth_credit_hedge.core.credit_spread import ZERO
+from eth_credit_hedge.core.credit_spread import CreditSpread
+from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 
 
 class LedgerEventType(str, Enum):
@@ -35,6 +36,32 @@ class LedgerEvent:
     zone_profit_component: Decimal = ZERO
     recovery_profit_component: Decimal = ZERO
     recovery_allocations: dict[int, Decimal] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the stable version-one persistence representation."""
+        return {
+            "event_version": 1,
+            "sequence": self.sequence,
+            "tick_index": self.tick_index,
+            "event_type": self.event_type.value,
+            "level_id": self.level_id,
+            "price": str(self.price),
+            "quantity": str(self.quantity),
+            "realized_pnl": str(self.realized_pnl),
+            "level_state": self.level_state.value,
+            "attempt": self.attempt,
+            "projected_stop_loss": str(self.projected_stop_loss),
+            "zone_profit_component": str(self.zone_profit_component),
+            "recovery_profit_component": str(self.recovery_profit_component),
+            "recovery_allocations": {
+                str(level_id): str(amount)
+                for level_id, amount in sorted(self.recovery_allocations.items())
+            },
+        }
+
+    def to_json(self) -> str:
+        """Serialize without whitespace while preserving the declared key order."""
+        return json.dumps(self.to_dict(), separators=(",", ":"))
 
 
 @dataclass(frozen=True, slots=True)

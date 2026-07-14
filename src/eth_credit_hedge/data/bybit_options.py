@@ -10,9 +10,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from core.credit_spread import CreditSpread, DecimalLike, ZERO, to_decimal
+from eth_credit_hedge.core.credit_spread import (
+    CreditSpread,
+    DecimalLike,
+    ZERO,
+    to_decimal,
+)
 
 
 SYMBOL_PATTERN = re.compile(
@@ -82,7 +87,7 @@ class QuotedCreditSpread:
 
 
 def load_option_fixture(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return _load_json_object(Path(path).read_text(encoding="utf-8"))
 
 
 def parse_option_fixture(fixture: dict[str, Any]) -> tuple[OptionQuote, ...]:
@@ -224,7 +229,14 @@ class BybitOptionClient:
             url, headers={"User-Agent": "eth-credit-spread-hedge/0.1"}
         )
         with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
+            return _load_json_object(response.read().decode("utf-8"))
+
+
+def _load_json_object(payload: str) -> dict[str, Any]:
+    parsed: object = json.loads(payload)
+    if not isinstance(parsed, dict):
+        raise ValueError("expected a JSON object")
+    return cast(dict[str, Any], parsed)
 
 
 def _join_quotes(

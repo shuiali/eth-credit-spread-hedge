@@ -39,6 +39,7 @@ extend-exclude = ["artifacts", "graphify-out"]
 python_version = "3.11"
 strict = true
 files = [
+    "src/eth_credit_hedge/backtesting",
     "src/eth_credit_hedge/application",
     "src/eth_credit_hedge/config",
     "src/eth_credit_hedge/core",

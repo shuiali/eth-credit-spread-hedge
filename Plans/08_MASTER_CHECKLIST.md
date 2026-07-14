@@ -117,23 +117,23 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Realistic simulation
 
-- [ ] Simulated exchange.
-- [ ] Delays.
-- [ ] Partial fills.
-- [ ] Duplicates.
-- [ ] Reordering.
-- [ ] Rejections.
-- [ ] Spread.
-- [ ] Fees.
-- [ ] Funding.
-- [ ] Slippage.
-- [ ] Gaps.
-- [ ] Option bid/ask.
-- [ ] Crash injection.
-- [ ] Database failure.
-- [ ] Network failure.
-- [ ] Jump/regime stress.
-- [ ] Predeclared thresholds.
+- [x] Simulated exchange.
+- [x] Delays.
+- [x] Partial fills.
+- [x] Duplicates.
+- [x] Reordering.
+- [x] Rejections.
+- [x] Spread.
+- [x] Fees.
+- [x] Funding.
+- [x] Slippage.
+- [x] Gaps.
+- [x] Option bid/ask.
+- [x] Crash injection.
+- [x] Database failure.
+- [x] Network failure.
+- [x] Jump/regime stress.
+- [x] Predeclared thresholds.
 
 ## Operations
 

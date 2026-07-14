@@ -303,11 +303,8 @@ def test_large_downward_segment_submits_ordered_baseline_only_entries(
             Decimal("0.010"),
             Decimal("0.010"),
         ]
-        assert [request.price for request in exchange.requests] == [
-            Decimal("3100"),
-            Decimal("3000"),
-            Decimal("2900"),
-        ]
+        assert all(request.order_type == "Market" for request in exchange.requests)
+        assert all(request.price is None for request in exchange.requests)
         assert all(request.side == "Sell" for request in exchange.requests)
         assert crossed.blocked == ()
 

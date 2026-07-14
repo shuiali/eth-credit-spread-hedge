@@ -23,19 +23,25 @@ class IntrabarPath(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Candle:
     timestamp: str
-    open: DecimalLike
-    high: DecimalLike
-    low: DecimalLike
-    close: DecimalLike
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
 
     def __post_init__(self) -> None:
-        for field_name in ("open", "high", "low", "close"):
-            object.__setattr__(self, field_name, to_decimal(getattr(self, field_name)))
-        if self.low <= 0:
+        open_price = to_decimal(self.open)
+        high_price = to_decimal(self.high)
+        low_price = to_decimal(self.low)
+        close_price = to_decimal(self.close)
+        object.__setattr__(self, "open", open_price)
+        object.__setattr__(self, "high", high_price)
+        object.__setattr__(self, "low", low_price)
+        object.__setattr__(self, "close", close_price)
+        if low_price <= 0:
             raise ValueError("candle prices must be positive")
-        if self.high < max(self.open, self.close):
+        if high_price < max(open_price, close_price):
             raise ValueError("candle high is below its open or close")
-        if self.low > min(self.open, self.close):
+        if low_price > min(open_price, close_price):
             raise ValueError("candle low is above its open or close")
 
 
@@ -57,10 +63,10 @@ def load_candles_csv(path: str | Path) -> list[Candle]:
         return [
             Candle(
                 timestamp=row["timestamp"],
-                open=row["open"],
-                high=row["high"],
-                low=row["low"],
-                close=row["close"],
+                open=to_decimal(row["open"]),
+                high=to_decimal(row["high"]),
+                low=to_decimal(row["low"]),
+                close=to_decimal(row["close"]),
             )
             for row in rows
         ]

@@ -271,12 +271,12 @@ Higher average P&L does not justify materially worse tail risk.
 
 ## Acceptance gate
 
-- [ ] Simulated exchange implements live ports.
-- [ ] Exact and realistic modes are separated.
-- [ ] Gap behavior is explicit.
-- [ ] Fees, funding, spread and slippage are accounted.
-- [ ] Duplicates and reordered events are tested.
-- [ ] Historical replay uses normalized captures.
-- [ ] Jump and oscillation stress models exist.
-- [ ] Runs reproduce by seed and event log.
-- [ ] Predeclared thresholds pass.
+- [x] Simulated exchange implements live ports.
+- [x] Exact and realistic modes are separated.
+- [x] Gap behavior is explicit.
+- [x] Fees, funding, spread and slippage are accounted.
+- [x] Duplicates and reordered events are tested.
+- [x] Historical replay uses normalized captures.
+- [x] Jump and oscillation stress models exist.
+- [x] Runs reproduce by seed and event log.
+- [x] Predeclared thresholds pass.

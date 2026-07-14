@@ -23,6 +23,7 @@ from eth_credit_hedge.domain.execution import (
     TriggerBy,
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
+from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -67,8 +68,34 @@ CREATE TABLE IF NOT EXISTS executions (
     payload_hash TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS protection_snapshots (
+    entry_order_link_id TEXT PRIMARY KEY REFERENCES order_intents(order_link_id),
+    state TEXT NOT NULL,
+    entry_quantity TEXT NOT NULL,
+    open_quantity TEXT NOT NULL,
+    average_entry_price TEXT NOT NULL,
+    entry_fees TEXT NOT NULL,
+    stop_order_link_id TEXT NOT NULL UNIQUE REFERENCES order_intents(order_link_id),
+    stop_order_id TEXT,
+    stop_trigger_price TEXT NOT NULL,
+    tp_order_link_id TEXT UNIQUE REFERENCES order_intents(order_link_id),
+    tp_order_id TEXT,
+    tp_price TEXT,
+    tp_filled_quantity TEXT NOT NULL,
+    stop_filled_quantity TEXT NOT NULL,
+    exit_notional TEXT NOT NULL,
+    exit_fees TEXT NOT NULL,
+    confirmed_recovery_debt TEXT NOT NULL,
+    pending_terminal_state TEXT,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (2, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -166,6 +193,89 @@ class SqliteExecutionStore:
             raise ValueError("payload hash must be a SHA-256 hexadecimal digest")
         return await asyncio.to_thread(
             self._record_execution_and_snapshot,
+            previous_version,
+            execution,
+            received,
+            payload_hash.lower(),
+            snapshot,
+        )
+
+    async def persist_protection_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        if request.order_link_id != snapshot.stop_order_link_id:
+            raise ValueError("request and stop snapshot client IDs differ")
+        persisted = _utc(persisted_at, "protection persistence time")
+        await asyncio.to_thread(
+            self._persist_protection_intent,
+            request,
+            snapshot,
+            persisted,
+        )
+
+    async def persist_take_profit_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        if request.order_link_id != snapshot.tp_order_link_id:
+            raise ValueError("request and TP snapshot client IDs differ")
+        persisted = _utc(persisted_at, "TP persistence time")
+        await asyncio.to_thread(
+            self._persist_take_profit_intent,
+            previous_version,
+            request,
+            snapshot,
+            persisted,
+        )
+
+    async def load_protection_snapshot(
+        self,
+        entry_order_link_id: str,
+    ) -> ProtectionSnapshot | None:
+        return await asyncio.to_thread(
+            self._load_protection_snapshot,
+            entry_order_link_id,
+        )
+
+    async def load_protection_snapshot_by_exit_id(
+        self,
+        order_link_id: str,
+    ) -> ProtectionSnapshot | None:
+        return await asyncio.to_thread(
+            self._load_protection_snapshot_by_exit_id,
+            order_link_id,
+        )
+
+    async def transition_protection_snapshot(
+        self,
+        previous_version: int,
+        snapshot: ProtectionSnapshot,
+    ) -> None:
+        await asyncio.to_thread(
+            self._transition_protection_snapshot,
+            previous_version,
+            snapshot,
+        )
+
+    async def record_exit_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: ProtectionSnapshot,
+    ) -> bool:
+        received = _utc(received_at, "execution receive time")
+        if _SHA256_PATTERN.fullmatch(payload_hash) is None:
+            raise ValueError("payload hash must be a SHA-256 hexadecimal digest")
+        return await asyncio.to_thread(
+            self._record_exit_execution_and_snapshot,
             previous_version,
             execution,
             received,
@@ -355,6 +465,102 @@ class SqliteExecutionStore:
             _update_snapshot(connection, previous_version, snapshot)
             return True
 
+    def _persist_protection_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                _insert_order_intent(connection, request, persisted_at)
+                connection.execute(
+                    """
+                    INSERT INTO protection_snapshots(
+                        entry_order_link_id, state, entry_quantity,
+                        open_quantity, average_entry_price, entry_fees,
+                        stop_order_link_id, stop_order_id, stop_trigger_price,
+                        tp_order_link_id, tp_order_id, tp_price,
+                        tp_filled_quantity, stop_filled_quantity,
+                        exit_notional, exit_fees, confirmed_recovery_debt,
+                        pending_terminal_state, version, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    _protection_values(snapshot),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("protection intent is already persisted") from exc
+
+    def _persist_take_profit_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                _insert_order_intent(connection, request, persisted_at)
+                _update_protection_snapshot(connection, previous_version, snapshot)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("TP intent is already persisted") from exc
+
+    def _load_protection_snapshot(
+        self,
+        entry_order_link_id: str,
+    ) -> ProtectionSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM protection_snapshots
+                WHERE entry_order_link_id = ?
+                """,
+                (entry_order_link_id,),
+            ).fetchone()
+        return None if row is None else _protection_from_row(row)
+
+    def _load_protection_snapshot_by_exit_id(
+        self,
+        order_link_id: str,
+    ) -> ProtectionSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM protection_snapshots
+                WHERE stop_order_link_id = ? OR tp_order_link_id = ?
+                """,
+                (order_link_id, order_link_id),
+            ).fetchone()
+        return None if row is None else _protection_from_row(row)
+
+    def _transition_protection_snapshot(
+        self,
+        previous_version: int,
+        snapshot: ProtectionSnapshot,
+    ) -> None:
+        with self._connect() as connection:
+            _update_protection_snapshot(connection, previous_version, snapshot)
+
+    def _record_exit_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: ProtectionSnapshot,
+    ) -> bool:
+        with self._connect() as connection:
+            inserted = _insert_execution_if_new(
+                connection,
+                execution,
+                received_at,
+                payload_hash,
+            )
+            if not inserted:
+                return False
+            _update_protection_snapshot(connection, previous_version, snapshot)
+            return True
+
     def _has_execution(self, execution_id: str) -> bool:
         with self._connect() as connection:
             row = connection.execute(
@@ -409,6 +615,177 @@ def _update_snapshot(
         raise ConcurrentSnapshotUpdateError(
             "entry snapshot version changed before transaction commit"
         )
+
+
+def _insert_order_intent(
+    connection: sqlite3.Connection,
+    request: PlaceOrderRequest,
+    persisted_at: datetime,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO order_intents(order_link_id, request_json, persisted_at)
+        VALUES (?, ?, ?)
+        """,
+        (
+            request.order_link_id,
+            _serialize_request(request),
+            persisted_at.isoformat(),
+        ),
+    )
+
+
+def _insert_execution_if_new(
+    connection: sqlite3.Connection,
+    execution: ExecutionUpdate,
+    received_at: datetime,
+    payload_hash: str,
+) -> bool:
+    inserted = connection.execute(
+        """
+        INSERT OR IGNORE INTO executions(
+            execution_id, order_id, order_link_id, symbol, side,
+            price, quantity, fee, is_maker, executed_at, received_at,
+            payload_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            execution.execution_id,
+            execution.order_id,
+            execution.order_link_id,
+            execution.symbol,
+            execution.side,
+            str(execution.price),
+            str(execution.quantity),
+            str(execution.fee),
+            None if execution.is_maker is None else int(execution.is_maker),
+            execution.executed_at.isoformat(),
+            received_at.isoformat(),
+            payload_hash,
+        ),
+    ).rowcount
+    return inserted == 1
+
+
+def _update_protection_snapshot(
+    connection: sqlite3.Connection,
+    previous_version: int,
+    snapshot: ProtectionSnapshot,
+) -> None:
+    if snapshot.version != previous_version + 1:
+        raise ValueError("new protection version must increment exactly once")
+    updated = connection.execute(
+        """
+        UPDATE protection_snapshots
+        SET state = ?, entry_quantity = ?, open_quantity = ?,
+            average_entry_price = ?, entry_fees = ?,
+            stop_order_link_id = ?, stop_order_id = ?,
+            stop_trigger_price = ?, tp_order_link_id = ?, tp_order_id = ?,
+            tp_price = ?, tp_filled_quantity = ?, stop_filled_quantity = ?,
+            exit_notional = ?, exit_fees = ?, confirmed_recovery_debt = ?,
+            pending_terminal_state = ?, version = ?, updated_at = ?
+        WHERE entry_order_link_id = ? AND version = ?
+        """,
+        (
+            snapshot.state.value,
+            str(snapshot.entry_quantity),
+            str(snapshot.open_quantity),
+            str(snapshot.average_entry_price),
+            str(snapshot.entry_fees),
+            snapshot.stop_order_link_id,
+            snapshot.stop_order_id,
+            str(snapshot.stop_trigger_price),
+            snapshot.tp_order_link_id,
+            snapshot.tp_order_id,
+            None if snapshot.tp_price is None else str(snapshot.tp_price),
+            str(snapshot.tp_filled_quantity),
+            str(snapshot.stop_filled_quantity),
+            str(snapshot.exit_notional),
+            str(snapshot.exit_fees),
+            str(snapshot.confirmed_recovery_debt),
+            (
+                None
+                if snapshot.pending_terminal_state is None
+                else snapshot.pending_terminal_state.value
+            ),
+            snapshot.version,
+            snapshot.updated_at.isoformat(),
+            snapshot.entry_order_link_id,
+            previous_version,
+        ),
+    ).rowcount
+    if updated != 1:
+        raise ConcurrentSnapshotUpdateError(
+            "protection snapshot version changed before transaction commit"
+        )
+
+
+def _protection_values(snapshot: ProtectionSnapshot) -> tuple[object, ...]:
+    return (
+        snapshot.entry_order_link_id,
+        snapshot.state.value,
+        str(snapshot.entry_quantity),
+        str(snapshot.open_quantity),
+        str(snapshot.average_entry_price),
+        str(snapshot.entry_fees),
+        snapshot.stop_order_link_id,
+        snapshot.stop_order_id,
+        str(snapshot.stop_trigger_price),
+        snapshot.tp_order_link_id,
+        snapshot.tp_order_id,
+        None if snapshot.tp_price is None else str(snapshot.tp_price),
+        str(snapshot.tp_filled_quantity),
+        str(snapshot.stop_filled_quantity),
+        str(snapshot.exit_notional),
+        str(snapshot.exit_fees),
+        str(snapshot.confirmed_recovery_debt),
+        (
+            None
+            if snapshot.pending_terminal_state is None
+            else snapshot.pending_terminal_state.value
+        ),
+        snapshot.version,
+        snapshot.updated_at.isoformat(),
+    )
+
+
+def _protection_from_row(row: sqlite3.Row) -> ProtectionSnapshot:
+    pending = row["pending_terminal_state"]
+    tp_price = row["tp_price"]
+    return ProtectionSnapshot(
+        entry_order_link_id=str(row["entry_order_link_id"]),
+        state=LiveExecutionState(str(row["state"])),
+        entry_quantity=Decimal(str(row["entry_quantity"])),
+        open_quantity=Decimal(str(row["open_quantity"])),
+        average_entry_price=Decimal(str(row["average_entry_price"])),
+        entry_fees=Decimal(str(row["entry_fees"])),
+        stop_order_link_id=str(row["stop_order_link_id"]),
+        stop_order_id=(
+            None if row["stop_order_id"] is None else str(row["stop_order_id"])
+        ),
+        stop_trigger_price=Decimal(str(row["stop_trigger_price"])),
+        tp_order_link_id=(
+            None
+            if row["tp_order_link_id"] is None
+            else str(row["tp_order_link_id"])
+        ),
+        tp_order_id=(
+            None if row["tp_order_id"] is None else str(row["tp_order_id"])
+        ),
+        tp_price=None if tp_price is None else Decimal(str(tp_price)),
+        tp_filled_quantity=Decimal(str(row["tp_filled_quantity"])),
+        stop_filled_quantity=Decimal(str(row["stop_filled_quantity"])),
+        exit_notional=Decimal(str(row["exit_notional"])),
+        exit_fees=Decimal(str(row["exit_fees"])),
+        confirmed_recovery_debt=Decimal(
+            str(row["confirmed_recovery_debt"])
+        ),
+        pending_terminal_state=(
+            None if pending is None else LiveExecutionState(str(pending))
+        ),
+        version=int(row["version"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
 
 
 def _snapshot_values(snapshot: EntryExecutionSnapshot) -> tuple[object, ...]:

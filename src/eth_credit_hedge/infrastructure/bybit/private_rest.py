@@ -26,6 +26,8 @@ from eth_credit_hedge.domain.execution import (
     OrderSide,
     OrderType,
     PlaceOrderRequest,
+    TimeInForce,
+    TriggerBy,
     UncertainOrderOutcomeError,
     WalletBalance,
     WalletState,
@@ -486,6 +488,23 @@ def _parse_exchange_order(
         reduce_only=_bool(item.get("reduceOnly"), "reduceOnly"),
         created_at=_timestamp(item.get("createdTime"), "createdTime"),
         updated_at=_timestamp(item.get("updatedTime"), "updatedTime"),
+        trigger_price=_optional_positive_decimal(
+            item.get("triggerPrice"),
+            "triggerPrice",
+        ),
+        trigger_by=cast(
+            TriggerBy | None,
+            _optional_text(item.get("triggerBy")),
+        ),
+        trigger_direction=_optional_integer(
+            item.get("triggerDirection"),
+            "triggerDirection",
+        ),
+        time_in_force=cast(
+            TimeInForce | None,
+            _optional_text(item.get("timeInForce")),
+        ),
+        position_idx=_optional_integer(item.get("positionIdx"), "positionIdx"),
     )
 
 
@@ -622,6 +641,17 @@ def _optional_text(value: object) -> str | None:
     if not isinstance(value, str):
         raise ValueError("optional Bybit text field must be a string")
     return value
+
+
+def _optional_integer(value: object, field_name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        return int(cast(str | int, value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
 
 
 def _decimal_text(value: Decimal) -> str:

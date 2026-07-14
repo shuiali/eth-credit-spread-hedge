@@ -80,6 +80,17 @@ class OneLevelEntryService:
                 order_link_id=discovered.order_link_id,
                 acknowledged_at=self._clock(),
             )
+        except Exception:
+            failed = transition_entry_snapshot(
+                submitted,
+                LiveExecutionState.ERROR,
+                updated_at=self._clock(),
+            )
+            await self._store.transition_entry_snapshot(
+                submitted.version,
+                failed,
+            )
+            raise
 
         acknowledged = transition_entry_snapshot(
             submitted,

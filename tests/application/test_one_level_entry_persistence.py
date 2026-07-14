@@ -71,10 +71,12 @@ class RecordingTradingAdapter:
         *,
         uncertain: bool = False,
         discovered_order: ExchangeOrder | None = None,
+        place_error: Exception | None = None,
     ) -> None:
         self.store = store
         self.uncertain = uncertain
         self.discovered_order = discovered_order
+        self.place_error = place_error
         self.place_calls = 0
         self.lookup_calls = 0
 
@@ -84,6 +86,8 @@ class RecordingTradingAdapter:
         snapshot = await self.store.load_entry_snapshot(request.order_link_id)
         assert snapshot is not None
         assert snapshot.state is LiveExecutionState.ENTRY_SUBMITTED
+        if self.place_error is not None:
+            raise self.place_error
         if self.uncertain:
             raise UncertainOrderOutcomeError(
                 order_link_id=request.order_link_id,
@@ -237,6 +241,23 @@ def test_unresolved_uncertain_submission_stays_reconciling(
     assert snapshot.state is LiveExecutionState.RECONCILING
     assert trading.place_calls == 1
     assert trading.lookup_calls == 1
+
+
+def test_known_entry_rejection_is_persisted_as_error(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "execution.sqlite3")
+    trading = RecordingTradingAdapter(
+        store,
+        place_error=RuntimeError("insufficient margin"),
+    )
+    service = OneLevelEntryService(trading=trading, store=store, clock=lambda: NOW)
+
+    with pytest.raises(RuntimeError, match="insufficient margin"):
+        asyncio.run(service.submit_entry(entry_request()))
+
+    snapshot = asyncio.run(store.load_entry_snapshot(ORDER_LINK_ID))
+    assert snapshot is not None
+    assert snapshot.state is LiveExecutionState.ERROR
+    assert trading.place_calls == 1
 
 
 def test_local_entry_quantity_must_equal_one_exchange_short_position(

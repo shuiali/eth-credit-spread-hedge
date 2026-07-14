@@ -294,6 +294,40 @@ def test_open_order_pagination_uses_the_exact_signed_query() -> None:
     assert "cursor=cursor%3A2" in requester.requests[1].url
 
 
+def test_conditional_order_query_preserves_trigger_contract() -> None:
+    item = order_item("stop-order", "ECH-01-C0001-L01-STOP-A01-9F3C")
+    item.update(
+        {
+            "side": "Buy",
+            "orderType": "Market",
+            "price": "",
+            "cumExecQty": "0",
+            "avgPrice": "",
+            "reduceOnly": True,
+            "triggerPrice": "3004.5",
+            "triggerBy": "LastPrice",
+            "triggerDirection": 1,
+            "timeInForce": "GTC",
+            "positionIdx": 0,
+            "orderStatus": "Untriggered",
+        }
+    )
+    requester = FakeRequester(
+        [success_response({"category": "linear", "list": [item]})]
+    )
+    rest = client(requester)
+
+    orders = asyncio.run(rest.get_open_orders("linear", "ETHUSDT"))
+
+    assert len(orders) == 1
+    assert orders[0].trigger_price == Decimal("3004.5")
+    assert orders[0].trigger_by == "LastPrice"
+    assert orders[0].trigger_direction == 1
+    assert orders[0].time_in_force == "GTC"
+    assert orders[0].position_idx == 0
+    assert orders[0].reduce_only
+
+
 def test_order_link_lookup_falls_back_to_durable_history() -> None:
     requester = FakeRequester(
         [

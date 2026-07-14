@@ -257,6 +257,11 @@ class ExchangeOrder:
     reduce_only: bool
     created_at: datetime
     updated_at: datetime
+    trigger_price: Decimal | None = None
+    trigger_by: TriggerBy | None = None
+    trigger_direction: int | None = None
+    time_in_force: TimeInForce | None = None
+    position_idx: int | None = None
 
     def __post_init__(self) -> None:
         _category(self.category)
@@ -276,6 +281,7 @@ class ExchangeOrder:
             "cumulative filled quantity",
         )
         average_price = _optional_decimal(self.average_price, "average price")
+        trigger_price = _optional_decimal(self.trigger_price, "trigger price")
         if price is not None and price <= ZERO:
             raise ValueError("order price must be positive")
         if quantity <= ZERO:
@@ -284,6 +290,25 @@ class ExchangeOrder:
             raise ValueError("cumulative filled quantity must be within order quantity")
         if average_price is not None and average_price <= ZERO:
             raise ValueError("average price must be positive")
+        if trigger_price is not None and trigger_price <= ZERO:
+            raise ValueError("trigger price must be positive")
+        if trigger_price is None:
+            if self.trigger_by is not None or self.trigger_direction is not None:
+                raise ValueError("trigger fields require a trigger price")
+        else:
+            if self.trigger_by not in ("LastPrice", "IndexPrice", "MarkPrice"):
+                raise ValueError("trigger price requires a trigger source")
+            if self.trigger_direction not in (1, 2):
+                raise ValueError("trigger price requires direction 1 or 2")
+        if self.time_in_force is not None and self.time_in_force not in (
+            "GTC",
+            "IOC",
+            "FOK",
+            "PostOnly",
+        ):
+            raise ValueError("unsupported time in force")
+        if self.position_idx is not None and self.position_idx not in (0, 1, 2):
+            raise ValueError("position index must be 0, 1, or 2")
         if type(self.reduce_only) is not bool:
             raise ValueError("reduce only must be boolean")
         created_at = _utc(self.created_at, "order creation time")
@@ -294,6 +319,7 @@ class ExchangeOrder:
         object.__setattr__(self, "quantity", quantity)
         object.__setattr__(self, "cumulative_filled_quantity", filled)
         object.__setattr__(self, "average_price", average_price)
+        object.__setattr__(self, "trigger_price", trigger_price)
         object.__setattr__(self, "created_at", created_at)
         object.__setattr__(self, "updated_at", updated_at)
 

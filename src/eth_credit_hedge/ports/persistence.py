@@ -11,6 +11,7 @@ from eth_credit_hedge.domain.execution import (
     PlaceOrderRequest,
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
+from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 
 
 class ExecutionPersistencePort(Protocol):
@@ -62,6 +63,46 @@ class ExecutionPersistencePort(Protocol):
         received_at: datetime,
         payload_hash: str,
         snapshot: EntryExecutionSnapshot,
+    ) -> bool: ...
+
+    async def persist_protection_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None: ...
+
+    async def persist_take_profit_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None: ...
+
+    async def load_protection_snapshot(
+        self,
+        entry_order_link_id: str,
+    ) -> ProtectionSnapshot | None: ...
+
+    async def load_protection_snapshot_by_exit_id(
+        self,
+        order_link_id: str,
+    ) -> ProtectionSnapshot | None: ...
+
+    async def transition_protection_snapshot(
+        self,
+        previous_version: int,
+        snapshot: ProtectionSnapshot,
+    ) -> None: ...
+
+    async def record_exit_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: ProtectionSnapshot,
     ) -> bool: ...
 
     async def has_execution(self, execution_id: str) -> bool: ...

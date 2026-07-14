@@ -143,9 +143,9 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Structured logs.
 - [x] Metrics.
 - [x] Alerts.
-- [ ] Soft pause.
-- [ ] Strategy close.
-- [ ] Emergency flatten.
+- [x] Soft pause.
+- [x] Strategy close.
+- [x] Emergency flatten.
 - [ ] Incident playbooks.
 - [ ] Rollback tested.
 

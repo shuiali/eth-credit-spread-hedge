@@ -135,6 +135,8 @@ class RecoveryAwareExchange:
 
 def make_service(
     tmp_path: Path,
+    *,
+    entry_gate=None,
 ) -> tuple[SameLevelRecoveryService, RecoveryAwareExchange, SqliteExecutionStore]:
     store = SqliteExecutionStore(tmp_path / "execution.sqlite3")
     asyncio.run(store.initialize())
@@ -149,6 +151,7 @@ def make_service(
         store=store,
         planner=SameLevelRecoveryPlanner(RiskEngine()),
         clock=lambda: NOW,
+        entry_gate=entry_gate,
     )
     return service, exchange, store
 
@@ -218,5 +221,35 @@ def test_rejected_recovery_locks_with_option_close_and_sends_no_order(
     assert not submission.plan.approved
     assert submission.plan.locked_action is LockedLevelAction.CLOSE_OPTION_STRATEGY
     assert submission.entry_snapshot is None
+    assert exchange.requests == []
+    assert asyncio.run(store.load_recovery_debt_snapshot(1)) == original
+
+
+def test_soft_pause_blocks_recovery_without_allocating_debt(tmp_path: Path) -> None:
+    class PausedGate:
+        entries_allowed = False
+
+    service, exchange, store = make_service(tmp_path, entry_gate=PausedGate())
+    original = asyncio.run(
+        service.record_confirmed_stop_debt(
+            level_id=1,
+            actual_stop_debt=Decimal("0.0338"),
+            projected_debt=Decimal("5"),
+        )
+    )
+
+    submission = asyncio.run(
+        service.submit_recovery(
+            level=level(),
+            instrument=instrument(),
+            risk_state=risk_state(),
+            limits=limits(),
+            order_link_id=RECOVERY_ID,
+        )
+    )
+
+    assert not submission.plan.approved
+    assert submission.plan.reasons[-1] == "kill switch blocks new entries"
+    assert submission.plan.locked_action is None
     assert exchange.requests == []
     assert asyncio.run(store.load_recovery_debt_snapshot(1)) == original

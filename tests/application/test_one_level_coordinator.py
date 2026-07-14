@@ -203,6 +203,7 @@ def make_coordinator(
     tmp_path: Path,
     *,
     position_state: OptionPositionState = OptionPositionState.OPEN,
+    entry_gate=None,
 ) -> tuple[OneLevelCoordinator, RecordingTradingAdapter]:
     store = SqliteExecutionStore(tmp_path / "execution.sqlite3")
     asyncio.run(store.initialize())
@@ -216,6 +217,7 @@ def make_coordinator(
         risk_engine=RiskEngine(),
         risk_limits=limits(),
         order_link_id_factory=lambda: ORDER_LINK_ID,
+        entry_gate=entry_gate,
     )
     return coordinator, trading
 
@@ -306,4 +308,23 @@ def test_reconnect_does_not_infer_a_crossing_across_missing_data(tmp_path: Path)
 
     assert not reset.triggered
     assert reset.reasons == ("connection generation changed",)
+    assert trading.requests == []
+
+
+def test_soft_pause_consumes_crossing_without_submitting_entry(tmp_path: Path) -> None:
+    class PausedGate:
+        entries_allowed = False
+
+    coordinator, trading = make_coordinator(tmp_path, entry_gate=PausedGate())
+    asyncio.run(coordinator.on_trigger(trigger("3001"), health(), risk_state()))
+
+    blocked = asyncio.run(
+        coordinator.on_trigger(trigger("2999"), health(), risk_state())
+    )
+    still_below = asyncio.run(
+        coordinator.on_trigger(trigger("2998"), health(), risk_state())
+    )
+
+    assert blocked.reasons == ("kill switch blocks new entries",)
+    assert not still_below.triggered
     assert trading.requests == []

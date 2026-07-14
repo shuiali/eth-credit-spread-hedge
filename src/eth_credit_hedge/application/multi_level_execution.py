@@ -39,6 +39,7 @@ from eth_credit_hedge.domain.risk import (
     TradeProposal,
 )
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
+from eth_credit_hedge.ports.control import EntryGatePort
 
 
 ZERO = Decimal("0")
@@ -78,6 +79,7 @@ class MultiLevelCoordinator:
         risk_engine: RiskEngine,
         risk_limits: RiskLimits,
         order_link_id_factory: Callable[[int, int], str],
+        entry_gate: EntryGatePort | None = None,
     ) -> None:
         normalized_levels = tuple(levels)
         if not normalized_levels:
@@ -98,6 +100,7 @@ class MultiLevelCoordinator:
         self._risk_engine = risk_engine
         self._risk_limits = risk_limits
         self._order_link_id_factory = order_link_id_factory
+        self._entry_gate = entry_gate
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._armed = {level.level_id: False for level in normalized_levels}
@@ -157,6 +160,14 @@ class MultiLevelCoordinator:
         effective_risk_state = risk_state
         for level in crossed:
             self._armed[level.level_id] = False
+            if self._entry_gate is not None and not self._entry_gate.entries_allowed:
+                blocked.append(
+                    LevelEntryBlock(
+                        level.level_id,
+                        ("kill switch blocks new entries",),
+                    )
+                )
+                continue
             reasons = self._preflight_reasons(level)
             if reasons:
                 blocked.append(LevelEntryBlock(level.level_id, reasons))

@@ -27,6 +27,7 @@ from eth_credit_hedge.domain.live_recovery import (
 )
 from eth_credit_hedge.domain.risk import RiskLimits, RiskState
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
+from eth_credit_hedge.ports.control import EntryGatePort
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,11 +45,13 @@ class SameLevelRecoveryService:
         store: ExecutionPersistencePort,
         planner: SameLevelRecoveryPlanner,
         clock: Callable[[], datetime],
+        entry_gate: EntryGatePort | None = None,
     ) -> None:
         self._entry_service = entry_service
         self._store = store
         self._planner = planner
         self._clock = clock
+        self._entry_gate = entry_gate
 
     async def record_confirmed_stop_debt(
         self,
@@ -111,6 +114,19 @@ class SameLevelRecoveryService:
             risk_state,
             limits,
         )
+        if (
+            plan.approved
+            and self._entry_gate is not None
+            and not self._entry_gate.entries_allowed
+        ):
+            plan = replace(
+                plan,
+                approved=False,
+                quantity=None,
+                allocated_debt=Decimal("0"),
+                reasons=plan.reasons + ("kill switch blocks new entries",),
+                locked_action=None,
+            )
         if not plan.approved or plan.quantity is None:
             return RecoverySubmission(plan, None, debt_snapshot)
 

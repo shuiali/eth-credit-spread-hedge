@@ -31,6 +31,7 @@ from eth_credit_hedge.domain.risk import (
     RiskState,
     TradeProposal,
 )
+from eth_credit_hedge.ports.control import EntryGatePort
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,7 @@ class OneLevelCoordinator:
         risk_engine: RiskEngine,
         risk_limits: RiskLimits,
         order_link_id_factory: Callable[[], str],
+        entry_gate: EntryGatePort | None = None,
     ) -> None:
         if level.level_id != 1:
             raise ValueError("one-level coordinator requires level 1")
@@ -66,6 +68,7 @@ class OneLevelCoordinator:
         self._risk_engine = risk_engine
         self._risk_limits = risk_limits
         self._order_link_id_factory = order_link_id_factory
+        self._entry_gate = entry_gate
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._entry_armed = False
@@ -111,6 +114,11 @@ class OneLevelCoordinator:
         self._entry_armed = False
         if self._submitted:
             return OneLevelTriggerResult(False, ("entry is already submitted",))
+        if self._entry_gate is not None and not self._entry_gate.entries_allowed:
+            return OneLevelTriggerResult(
+                False,
+                ("kill switch blocks new entries",),
+            )
         if self._level.state is not LevelState.READY:
             return OneLevelTriggerResult(False, ("virtual level is not READY",))
         if self._option_position.state is not OptionPositionState.OPEN:

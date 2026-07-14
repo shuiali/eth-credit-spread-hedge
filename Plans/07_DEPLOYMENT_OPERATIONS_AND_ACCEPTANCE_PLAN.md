@@ -278,7 +278,7 @@ Each includes detection, automatic action, manual action, verification and revie
 - [ ] Restart/reconciliation passes.
 - [ ] Multiple levels pass demo.
 - [ ] Recovery passes with actual fills.
-- [ ] Kill switches pass.
+- [x] Kill switches pass.
 - [ ] Alerts pass.
 - [ ] Production limits are finite.
 - [ ] Expiry handling passes.

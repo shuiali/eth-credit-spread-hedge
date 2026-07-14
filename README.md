@@ -19,6 +19,7 @@ ETH put credit spread with virtual short-perpetual levels.
 - Seeded macro-GBM paths expanded into 20,001+ exact $0.10 microticks.
 - A calculation-free original-style dashboard with complete risk-detail panels.
 - Fixture-first Bybit ETH option parsing, IV/Greeks, and live-chain integration.
+- Exchange-neutral option contract, quote, fill, and protected-position models.
 
 Fees, slippage, funding, partial fills, gaps, automatic spread selection, IV
 repricing, and live trading remain intentionally excluded.

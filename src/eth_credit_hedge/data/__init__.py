@@ -2,8 +2,7 @@
 
 from eth_credit_hedge.data.bybit_options import (
     BybitOptionClient,
-    OptionInstrument,
-    OptionQuote,
+    OptionChainEntry,
     QuotedCreditSpread,
     build_credit_spread_from_quotes,
     load_option_fixture,
@@ -13,8 +12,7 @@ from eth_credit_hedge.data.bybit_options import (
 
 __all__ = [
     "BybitOptionClient",
-    "OptionInstrument",
-    "OptionQuote",
+    "OptionChainEntry",
     "QuotedCreditSpread",
     "build_credit_spread_from_quotes",
     "load_option_fixture",

@@ -35,4 +35,5 @@ files = [
     "src/eth_credit_hedge/config",
     "src/eth_credit_hedge/core",
     "src/eth_credit_hedge/data",
+    "src/eth_credit_hedge/domain",
 ]

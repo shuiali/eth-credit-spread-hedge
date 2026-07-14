@@ -11,17 +11,17 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Baseline defaults enforced.
 - [x] Experimental modes separated.
 - [x] All tests pass from fresh clone.
-- [ ] Lint, types and CI pass.
+- [x] Lint, types and CI pass.
 
 ## Option position
 
-- [ ] Contract/quote/fill models.
-- [ ] Leg positions.
+- [x] Contract/quote/fill models.
+- [x] Leg positions.
 - [ ] Spread lifecycle.
 - [ ] Actual credit from fills.
 - [ ] Mark P&L.
 - [ ] Liquidation P&L.
-- [ ] Expiration P&L retained.
+- [x] Expiration P&L retained.
 - [ ] Partial-fill policy.
 - [ ] Protective long first.
 - [ ] Quote freshness.

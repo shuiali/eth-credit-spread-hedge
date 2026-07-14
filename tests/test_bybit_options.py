@@ -1,7 +1,7 @@
 """Offline fixture and selected-live-structure tests."""
 
 from dataclasses import replace
-from datetime import date
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from eth_credit_hedge.data.bybit_options import (
     parse_option_fixture,
     select_put_credit_spread,
 )
+from eth_credit_hedge.domain.instruments import OptionContract, OptionMarketQuote
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "bybit_eth_option_pair.json"
@@ -26,24 +27,37 @@ def test_real_fixture_parses_exact_raw_symbol_and_quote_fields() -> None:
     long = by_symbol["ETH-31JUL26-1650-P-USDT"]
 
     assert raw["exchange"] == "Bybit"
-    assert short.instrument.strike == Decimal("1750")
-    assert short.instrument.expiry == date(2026, 7, 31)
-    assert short.instrument.option_type == "Put"
-    assert short.bid == Decimal("62.4")
-    assert short.ask == Decimal("62.9")
-    assert short.mark == Decimal("62.38000001")
-    assert short.bid_iv == Decimal("0.4794")
-    assert short.ask_iv == Decimal("0.4826")
-    assert short.mark_iv == Decimal("0.4793")
-    assert short.delta == Decimal("-0.42665899")
-    assert short.gamma == Decimal("0.00209858")
-    assert short.vega == Decimal("1.52919144")
-    assert short.theta == Decimal("-2.07945438")
-    assert long.instrument.strike == Decimal("1650")
-    assert long.instrument.expiry == date(2026, 7, 31)
-    assert long.bid == Decimal("29.9")
-    assert long.ask == Decimal("30.1")
-    assert long.mark == Decimal("30.0643528")
+    assert isinstance(short.contract, OptionContract)
+    assert isinstance(short.quote, OptionMarketQuote)
+    assert short.contract.strike == Decimal("1750")
+    assert short.contract.expiry_time_utc == datetime(
+        2026, 7, 31, 8, tzinfo=timezone.utc
+    )
+    assert short.contract.contract_multiplier == Decimal("1")
+    assert short.contract.option_type == "Put"
+    assert short.status == "Trading"
+    assert short.quote.timestamp_utc == datetime(
+        2026, 7, 13, 17, 3, 26, 868000, tzinfo=timezone.utc
+    )
+    assert short.quote.bid_price == Decimal("62.4")
+    assert short.quote.bid_size == Decimal("48.3")
+    assert short.quote.ask_price == Decimal("62.9")
+    assert short.quote.ask_size == Decimal("61.8")
+    assert short.quote.mark_price == Decimal("62.38000001")
+    assert short.quote.bid_iv == Decimal("0.4794")
+    assert short.quote.ask_iv == Decimal("0.4826")
+    assert short.quote.mark_iv == Decimal("0.4793")
+    assert short.quote.delta == Decimal("-0.42665899")
+    assert short.quote.gamma == Decimal("0.00209858")
+    assert short.quote.vega == Decimal("1.52919144")
+    assert short.quote.theta == Decimal("-2.07945438")
+    assert long.contract.strike == Decimal("1650")
+    assert long.contract.expiry_time_utc == datetime(
+        2026, 7, 31, 8, tzinfo=timezone.utc
+    )
+    assert long.quote.bid_price == Decimal("29.9")
+    assert long.quote.ask_price == Decimal("30.1")
+    assert long.quote.mark_price == Decimal("30.0643528")
 
 
 def test_selected_quotes_build_the_validated_credit_spread_exactly() -> None:
@@ -70,7 +84,7 @@ def test_selected_quotes_build_the_validated_credit_spread_exactly() -> None:
 
 def test_direct_builder_matches_symbol_selection() -> None:
     quotes = parse_option_fixture(load_option_fixture(FIXTURE))
-    by_strike = {quote.instrument.strike: quote for quote in quotes}
+    by_strike = {entry.contract.strike: entry for entry in quotes}
 
     selected = build_credit_spread_from_quotes(
         by_strike[Decimal("1750")], by_strike[Decimal("1650")], "2"
@@ -83,22 +97,34 @@ def test_direct_builder_matches_symbol_selection() -> None:
 
 def test_small_index_snapshot_difference_uses_the_average_reference() -> None:
     quotes = parse_option_fixture(load_option_fixture(FIXTURE))
-    by_strike = {quote.instrument.strike: quote for quote in quotes}
+    by_strike = {entry.contract.strike: entry for entry in quotes}
     short = by_strike[Decimal("1750")]
     long = by_strike[Decimal("1650")]
-    long = replace(long, index_price=short.index_price + Decimal("0.50"))
+    long = replace(
+        long,
+        quote=replace(
+            long.quote,
+            index_price=short.quote.index_price + Decimal("0.50"),
+        ),
+    )
 
     selected = build_credit_spread_from_quotes(short, long, "1")
 
-    assert selected.spread.spot == short.index_price + Decimal("0.25")
+    assert selected.spread.spot == short.quote.index_price + Decimal("0.25")
 
 
 def test_material_index_snapshot_difference_is_rejected() -> None:
     quotes = parse_option_fixture(load_option_fixture(FIXTURE))
-    by_strike = {quote.instrument.strike: quote for quote in quotes}
+    by_strike = {entry.contract.strike: entry for entry in quotes}
     short = by_strike[Decimal("1750")]
     long = by_strike[Decimal("1650")]
-    long = replace(long, index_price=short.index_price + Decimal("5"))
+    long = replace(
+        long,
+        quote=replace(
+            long.quote,
+            index_price=short.quote.index_price + Decimal("5"),
+        ),
+    )
 
     with pytest.raises(ValueError, match="index prices differ"):
         build_credit_spread_from_quotes(short, long, "1")

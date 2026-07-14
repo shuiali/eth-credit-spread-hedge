@@ -23,12 +23,13 @@ def main() -> None:
     chain = BybitOptionClient().fetch_eth_chain()
     if not args.short_symbol or not args.long_symbol:
         print("Available ETH puts (select exact symbols with --short-symbol and --long-symbol):")
-        for quote in chain:
+        for entry in chain:
             print(
-                f"{quote.symbol}  strike={quote.instrument.strike} "
-                f"expiry={quote.instrument.expiry} bid={quote.bid} "
-                f"ask={quote.ask} mark={quote.mark} mark_iv={quote.mark_iv} "
-                f"delta={quote.delta}"
+                f"{entry.symbol}  strike={entry.contract.strike} "
+                f"expiry={entry.contract.expiry_time_utc.date()} "
+                f"bid={entry.quote.bid_price} ask={entry.quote.ask_price} "
+                f"mark={entry.quote.mark_price} mark_iv={entry.quote.mark_iv} "
+                f"delta={entry.quote.delta}"
             )
         return
 

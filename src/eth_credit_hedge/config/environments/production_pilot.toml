@@ -1,0 +1,24 @@
+environment = "PRODUCTION_PILOT"
+database_path = "state/production_pilot.sqlite3"
+rest_base_url = "https://api.bybit.com"
+private_websocket_url = "wss://stream.bybit.com/v5/private"
+credential_key_env = "BYBIT_API_KEY_PRODUCTION_PILOT"
+credential_secret_env = "BYBIT_API_SECRET_PRODUCTION_PILOT"
+external_order_mutations_enabled = true
+required_execution_schema_version = 3
+required_journal_schema_version = 1
+maximum_clock_drift_ms = 250
+
+[risk_limits]
+maximum_perp_quantity = "0.01"
+maximum_perp_notional = "50"
+maximum_margin_usage = "0.15"
+minimum_liquidation_distance = "0.30"
+maximum_recovery_debt = "1"
+maximum_projected_stop_loss = "0.25"
+maximum_realized_cycle_loss = "1"
+maximum_daily_realized_loss = "2"
+maximum_entries_per_level = 1
+maximum_active_levels = 1
+maximum_order_requests_per_minute = 5
+maximum_reconciliation_failures = 1

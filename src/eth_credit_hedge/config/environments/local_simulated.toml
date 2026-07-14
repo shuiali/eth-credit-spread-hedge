@@ -1,0 +1,24 @@
+environment = "LOCAL_SIMULATED"
+database_path = "state/local_simulated.sqlite3"
+rest_base_url = ""
+private_websocket_url = ""
+credential_key_env = ""
+credential_secret_env = ""
+external_order_mutations_enabled = false
+required_execution_schema_version = 3
+required_journal_schema_version = 1
+maximum_clock_drift_ms = 1000
+
+[risk_limits]
+maximum_perp_quantity = "1"
+maximum_perp_notional = "10000"
+maximum_margin_usage = "0.50"
+minimum_liquidation_distance = "0.10"
+maximum_recovery_debt = "100"
+maximum_projected_stop_loss = "20"
+maximum_realized_cycle_loss = "100"
+maximum_daily_realized_loss = "200"
+maximum_entries_per_level = 3
+maximum_active_levels = 10
+maximum_order_requests_per_minute = 30
+maximum_reconciliation_failures = 3

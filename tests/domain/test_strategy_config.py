@@ -98,3 +98,11 @@ def test_deployment_config_rejects_mixed_trigger_source() -> None:
             strategy=StrategyConfig.baseline(),
             trigger_price_source=TriggerPriceSource.MARK_PRICE,
         )
+
+
+def test_plan_seven_environment_names_and_legacy_aliases_are_stable() -> None:
+    assert RuntimeEnvironment.BACKTEST is RuntimeEnvironment.LOCAL_EXACT
+    assert RuntimeEnvironment.SHADOW is RuntimeEnvironment.SHADOW_MAINNET
+    assert RuntimeConfig.from_env(
+        {"ETH_HEDGE_ENVIRONMENT": "LOCAL_SIMULATED"}
+    ).environment is RuntimeEnvironment.LOCAL_SIMULATED

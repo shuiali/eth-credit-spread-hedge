@@ -137,8 +137,8 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Operations
 
-- [ ] Environment separation.
-- [ ] Shadow mode.
+- [x] Environment separation.
+- [x] Shadow mode.
 - [ ] Health endpoints.
 - [ ] Structured logs.
 - [ ] Metrics.

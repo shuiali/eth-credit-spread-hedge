@@ -24,7 +24,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-eth_credit_hedge = ["py.typed"]
+eth_credit_hedge = ["py.typed", "config/environments/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

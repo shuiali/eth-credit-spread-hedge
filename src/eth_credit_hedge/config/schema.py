@@ -25,10 +25,14 @@ class LockPolicy(str, Enum):
 
 
 class RuntimeEnvironment(str, Enum):
-    BACKTEST = "backtest"
-    DEMO = "demo"
-    SHADOW = "shadow"
-    PRODUCTION = "production"
+    LOCAL_EXACT = "LOCAL_EXACT"
+    BACKTEST = "LOCAL_EXACT"
+    LOCAL_SIMULATED = "LOCAL_SIMULATED"
+    DEMO = "DEMO"
+    SHADOW_MAINNET = "SHADOW_MAINNET"
+    SHADOW = "SHADOW_MAINNET"
+    PRODUCTION_PILOT = "PRODUCTION_PILOT"
+    PRODUCTION = "PRODUCTION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +93,7 @@ class StrategyConfig:
 class RuntimeConfig:
     """Environment selection plus its validated strategy configuration."""
 
-    environment: RuntimeEnvironment = RuntimeEnvironment.BACKTEST
+    environment: RuntimeEnvironment = RuntimeEnvironment.LOCAL_EXACT
     strategy: StrategyConfig = field(default_factory=StrategyConfig.baseline)
     trigger_price_source: TriggerPriceSource = DEFAULT_TRIGGER_PRICE_SOURCE
 
@@ -98,7 +102,11 @@ class RuntimeConfig:
         object.__setattr__(self, "environment", environment)
         trigger_source = TriggerPriceSource(self.trigger_price_source)
         object.__setattr__(self, "trigger_price_source", trigger_source)
-        if environment is not RuntimeEnvironment.BACKTEST and (
+        local_environments = {
+            RuntimeEnvironment.LOCAL_EXACT,
+            RuntimeEnvironment.LOCAL_SIMULATED,
+        }
+        if environment not in local_environments and (
             self.strategy.recovery_mode is not RecoveryMode.FULL_NEXT_TP
             or self.strategy.lock_policy is not LockPolicy.UNHEDGED
         ):
@@ -106,7 +114,7 @@ class RuntimeConfig:
                 "demo, shadow, and production require FULL_NEXT_TP and UNHEDGED"
             )
         if (
-            environment is not RuntimeEnvironment.BACKTEST
+            environment not in local_environments
             and trigger_source is not TriggerPriceSource.LAST_TRADE
         ):
             raise ValueError(
@@ -140,8 +148,16 @@ class RuntimeConfig:
                 )
             ),
         )
+        raw_environment = values.get(
+            "ETH_HEDGE_ENVIRONMENT",
+            RuntimeEnvironment.LOCAL_EXACT.value,
+        ).upper()
+        legacy_environments = {
+            "BACKTEST": RuntimeEnvironment.LOCAL_EXACT.value,
+            "SHADOW": RuntimeEnvironment.SHADOW_MAINNET.value,
+        }
         environment = RuntimeEnvironment(
-            values.get("ETH_HEDGE_ENVIRONMENT", RuntimeEnvironment.BACKTEST.value).lower()
+            legacy_environments.get(raw_environment, raw_environment)
         )
         trigger_price_source = TriggerPriceSource(
             values.get(

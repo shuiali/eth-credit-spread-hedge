@@ -1,0 +1,24 @@
+environment = "DEMO"
+database_path = "state/demo.sqlite3"
+rest_base_url = "https://api-demo.bybit.com"
+private_websocket_url = "wss://stream-demo.bybit.com/v5/private"
+credential_key_env = "BYBIT_API_KEY_DEMO"
+credential_secret_env = "BYBIT_API_SECRET_DEMO"
+external_order_mutations_enabled = true
+required_execution_schema_version = 3
+required_journal_schema_version = 1
+maximum_clock_drift_ms = 500
+
+[risk_limits]
+maximum_perp_quantity = "0.10"
+maximum_perp_notional = "500"
+maximum_margin_usage = "0.30"
+minimum_liquidation_distance = "0.20"
+maximum_recovery_debt = "10"
+maximum_projected_stop_loss = "2"
+maximum_realized_cycle_loss = "10"
+maximum_daily_realized_loss = "20"
+maximum_entries_per_level = 2
+maximum_active_levels = 3
+maximum_order_requests_per_minute = 10
+maximum_reconciliation_failures = 2

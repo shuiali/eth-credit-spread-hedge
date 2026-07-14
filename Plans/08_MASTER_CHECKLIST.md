@@ -139,10 +139,10 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 - [x] Environment separation.
 - [x] Shadow mode.
-- [ ] Health endpoints.
-- [ ] Structured logs.
-- [ ] Metrics.
-- [ ] Alerts.
+- [x] Health endpoints.
+- [x] Structured logs.
+- [x] Metrics.
+- [x] Alerts.
 - [ ] Soft pause.
 - [ ] Strategy close.
 - [ ] Emergency flatten.

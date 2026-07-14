@@ -258,11 +258,11 @@ matched quantity
 
 ## Acceptance gate
 
-- [ ] Fill-based credit exists.
-- [ ] Terminal, mark and liquidation P&L are separate.
-- [ ] Protective long is confirmed before spread is OPEN.
-- [ ] Partial fills cannot create silent naked exposure.
-- [ ] Quote freshness is enforced.
-- [ ] Expiry lifecycle is defined.
-- [ ] Tests cover multiple and partial fills.
-- [ ] Baseline terminal tests remain unchanged.
+- [x] Fill-based credit exists.
+- [x] Terminal, mark and liquidation P&L are separate.
+- [x] Protective long is confirmed before spread is OPEN.
+- [x] Partial fills cannot create silent naked exposure.
+- [x] Quote freshness is enforced.
+- [x] Expiry lifecycle is defined.
+- [x] Tests cover multiple and partial fills.
+- [x] Baseline terminal tests remain unchanged.

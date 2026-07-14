@@ -17,15 +17,15 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 - [x] Contract/quote/fill models.
 - [x] Leg positions.
-- [ ] Spread lifecycle.
-- [ ] Actual credit from fills.
-- [ ] Mark P&L.
-- [ ] Liquidation P&L.
+- [x] Spread lifecycle.
+- [x] Actual credit from fills.
+- [x] Mark P&L.
+- [x] Liquidation P&L.
 - [x] Expiration P&L retained.
-- [ ] Partial-fill policy.
-- [ ] Protective long first.
-- [ ] Quote freshness.
-- [ ] Expiry cutoff.
+- [x] Partial-fill policy.
+- [x] Protective long first.
+- [x] Quote freshness.
+- [x] Expiry cutoff.
 
 ## Instruments and public data
 

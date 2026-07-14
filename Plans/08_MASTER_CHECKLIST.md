@@ -74,18 +74,18 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Persistence and reconciliation
 
-- [ ] Event journal.
-- [ ] Event versions.
-- [ ] Snapshots.
+- [x] Event journal.
+- [x] Event versions.
+- [x] Snapshots.
 - [x] Migrations.
 - [x] Intent persisted before request.
 - [x] Execution persisted atomically.
-- [ ] Startup replay.
-- [ ] Exchange query.
-- [ ] Order comparison.
-- [ ] Position comparison.
-- [ ] Missing protection repair.
-- [ ] Unknown state suspension.
+- [x] Startup replay.
+- [x] Exchange query.
+- [x] Order comparison.
+- [x] Position comparison.
+- [x] Missing protection repair.
+- [x] Unknown state suspension.
 
 ## Risk
 

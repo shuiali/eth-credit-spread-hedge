@@ -31,6 +31,7 @@ from eth_credit_hedge.domain.protected_execution import (
     confirm_take_profit,
     mark_protection_reconciling,
     protection_position_matches,
+    replace_stop_intent,
 )
 from eth_credit_hedge.ports.account import AccountPort
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
@@ -183,6 +184,64 @@ class ProtectiveExitService:
             confirmed,
         )
         return confirmed
+
+    async def restore_stop(
+        self,
+        snapshot: ProtectionSnapshot,
+        instrument: InstrumentSpec,
+        order_link_id: str,
+        *,
+        stop_rate: Decimal,
+    ) -> ProtectionSnapshot:
+        self._validate_instrument(instrument)
+        if stop_rate <= 0:
+            raise ValueError("stop rate must be positive")
+        trigger_price = quantize_limit_price(
+            snapshot.average_entry_price * (Decimal("1") + stop_rate),
+            instrument.price_filter.tick_size,
+            side="Buy",
+            policy=PriceQuantizationPolicy.AGGRESSIVE,
+        )
+        request = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Buy",
+            order_type="Market",
+            quantity=snapshot.open_quantity,
+            order_link_id=order_link_id,
+            reduce_only=True,
+            trigger_price=trigger_price,
+            trigger_direction=1,
+            trigger_by="LastPrice",
+            position_idx=0,
+        )
+        with_intent = replace_stop_intent(
+            snapshot,
+            order_link_id=order_link_id,
+            trigger_price=trigger_price,
+            updated_at=self._clock(),
+        )
+        await self._store.persist_replacement_stop_intent(
+            snapshot.version,
+            request,
+            with_intent,
+            with_intent.updated_at,
+        )
+        try:
+            visible = await self._place_and_confirm_visible(request)
+        except Exception:
+            await self._set_reconciling(with_intent)
+            raise
+        protected = confirm_stop(
+            with_intent,
+            order_id=visible.order_id,
+            updated_at=self._clock(),
+        )
+        await self._store.transition_protection_snapshot(
+            with_intent.version,
+            protected,
+        )
+        return protected
 
     async def apply_exit_execution(
         self,

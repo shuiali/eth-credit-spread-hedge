@@ -45,6 +45,7 @@ NOW = datetime(2026, 7, 14, 12, tzinfo=timezone.utc)
 ENTRY_ID = "ECH-01-C0001-L01-ENTRY-A01-9F3C"
 STOP_ID = "ECH-01-C0001-L01-STOP-A01-9F3C"
 TP_ID = "ECH-01-C0001-L01-TP-A01-9F3C"
+REPLACEMENT_STOP_ID = "ECH-01-C0001-L01-STOP-A02-ABCD"
 
 
 def instrument() -> InstrumentSpec:
@@ -167,7 +168,7 @@ def exchange_order(request: PlaceOrderRequest) -> ExchangeOrder:
         category=request.category,
         order_id=(
             "stop-exchange-order"
-            if request.order_link_id == STOP_ID
+            if "-STOP-" in request.order_link_id
             else "tp-exchange-order"
         ),
         order_link_id=request.order_link_id,
@@ -679,5 +680,90 @@ def test_position_mismatch_after_exit_suspends_in_reconciling(tmp_path: Path) ->
         snapshot = await service.reconcile_after_exit(ENTRY_ID)
 
         assert snapshot.state is LiveExecutionState.RECONCILING
+
+    asyncio.run(run())
+
+
+def test_missing_stop_is_replaced_with_new_attempt_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        database = tmp_path / "execution.sqlite3"
+        store = SqliteExecutionStore(database)
+        await store.initialize()
+        await seed_filled_entry(store)
+        trading = FakeTradingAdapter(store)
+        service = ProtectiveExitService(
+            trading=trading,
+            account=FakeAccountAdapter(()),
+            store=store,
+            clock=lambda: NOW,
+            sleeper=no_wait,
+        )
+        stop_request = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Buy",
+            order_type="Market",
+            quantity=Decimal("0.010"),
+            order_link_id=STOP_ID,
+            reduce_only=True,
+            trigger_price=Decimal("3004.5"),
+            trigger_direction=1,
+            trigger_by="LastPrice",
+        )
+        tp_request = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Buy",
+            order_type="Limit",
+            quantity=Decimal("0.010"),
+            order_link_id=TP_ID,
+            price=Decimal("2900"),
+            reduce_only=True,
+        )
+        trading.visibility[STOP_ID] = [exchange_order(stop_request)]
+        protected = await service.install_stop(
+            ENTRY_ID, instrument(), STOP_ID, stop_rate=Decimal("0.0015")
+        )
+        trading.visibility[TP_ID] = [exchange_order(tp_request)]
+        with_tp = await service.install_take_profit(
+            protected,
+            instrument(),
+            TP_ID,
+            desired_price=Decimal("2900"),
+        )
+        replacement = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Buy",
+            order_type="Market",
+            quantity=Decimal("0.010"),
+            order_link_id=REPLACEMENT_STOP_ID,
+            reduce_only=True,
+            trigger_price=Decimal("3004.5"),
+            trigger_direction=1,
+            trigger_by="LastPrice",
+        )
+        trading.visibility[REPLACEMENT_STOP_ID] = [exchange_order(replacement)]
+
+        repaired = await service.restore_stop(
+            with_tp,
+            instrument(),
+            REPLACEMENT_STOP_ID,
+            stop_rate=Decimal("0.0015"),
+        )
+
+        assert repaired.state is LiveExecutionState.ACTIVE_PROTECTED
+        assert repaired.stop_order_link_id == REPLACEMENT_STOP_ID
+        assert repaired.stop_order_id == "stop-exchange-order"
+        assert repaired.tp_order_link_id == TP_ID
+        restarted = SqliteExecutionStore(database)
+        await restarted.initialize()
+        assert len(await restarted.load_all_order_intents()) == 4
+        assert await restarted.load_all_entry_snapshots() == (
+            await store.load_entry_snapshot(ENTRY_ID),
+        )
+        assert await restarted.load_all_protection_snapshots() == (repaired,)
 
     asyncio.run(run())

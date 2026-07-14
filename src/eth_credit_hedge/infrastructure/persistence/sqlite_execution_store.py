@@ -140,11 +140,19 @@ class SqliteExecutionStore:
     ) -> PlaceOrderRequest | None:
         return await asyncio.to_thread(self._load_order_intent, order_link_id)
 
+    async def load_all_order_intents(self) -> tuple[PlaceOrderRequest, ...]:
+        return await asyncio.to_thread(self._load_all_order_intents)
+
     async def load_entry_snapshot(
         self,
         order_link_id: str,
     ) -> EntryExecutionSnapshot | None:
         return await asyncio.to_thread(self._load_entry_snapshot, order_link_id)
+
+    async def load_all_entry_snapshots(
+        self,
+    ) -> tuple[EntryExecutionSnapshot, ...]:
+        return await asyncio.to_thread(self._load_all_entry_snapshots)
 
     async def transition_entry_snapshot(
         self,
@@ -234,6 +242,24 @@ class SqliteExecutionStore:
             persisted,
         )
 
+    async def persist_replacement_stop_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        if request.order_link_id != snapshot.stop_order_link_id:
+            raise ValueError("request and replacement stop client IDs differ")
+        persisted = _utc(persisted_at, "replacement stop persistence time")
+        await asyncio.to_thread(
+            self._persist_replacement_stop_intent,
+            previous_version,
+            request,
+            snapshot,
+            persisted,
+        )
+
     async def load_protection_snapshot(
         self,
         entry_order_link_id: str,
@@ -251,6 +277,11 @@ class SqliteExecutionStore:
             self._load_protection_snapshot_by_exit_id,
             order_link_id,
         )
+
+    async def load_all_protection_snapshots(
+        self,
+    ) -> tuple[ProtectionSnapshot, ...]:
+        return await asyncio.to_thread(self._load_all_protection_snapshots)
 
     async def transition_protection_snapshot(
         self,
@@ -285,6 +316,9 @@ class SqliteExecutionStore:
 
     async def has_execution(self, execution_id: str) -> bool:
         return await asyncio.to_thread(self._has_execution, execution_id)
+
+    async def load_all_executions(self) -> tuple[ExecutionUpdate, ...]:
+        return await asyncio.to_thread(self._load_all_executions)
 
     async def execution_count(self) -> int:
         return await asyncio.to_thread(self._execution_count)
@@ -362,6 +396,18 @@ class SqliteExecutionStore:
             return None
         return _deserialize_request(str(row["request_json"]))
 
+    def _load_all_order_intents(self) -> tuple[PlaceOrderRequest, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT request_json FROM order_intents
+                ORDER BY persisted_at, order_link_id
+                """
+            ).fetchall()
+        return tuple(
+            _deserialize_request(str(row["request_json"])) for row in rows
+        )
+
     def _load_entry_snapshot(
         self,
         order_link_id: str,
@@ -372,6 +418,18 @@ class SqliteExecutionStore:
                 (order_link_id,),
             ).fetchone()
         return None if row is None else _snapshot_from_row(row)
+
+    def _load_all_entry_snapshots(
+        self,
+    ) -> tuple[EntryExecutionSnapshot, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM entry_snapshots
+                ORDER BY order_link_id
+                """
+            ).fetchall()
+        return tuple(_snapshot_from_row(row) for row in rows)
 
     def _transition_entry_snapshot(
         self,
@@ -505,6 +563,20 @@ class SqliteExecutionStore:
         except sqlite3.IntegrityError as exc:
             raise ValueError("TP intent is already persisted") from exc
 
+    def _persist_replacement_stop_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                _insert_order_intent(connection, request, persisted_at)
+                _update_protection_snapshot(connection, previous_version, snapshot)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("replacement stop intent is already persisted") from exc
+
     def _load_protection_snapshot(
         self,
         entry_order_link_id: str,
@@ -532,6 +604,18 @@ class SqliteExecutionStore:
                 (order_link_id, order_link_id),
             ).fetchone()
         return None if row is None else _protection_from_row(row)
+
+    def _load_all_protection_snapshots(
+        self,
+    ) -> tuple[ProtectionSnapshot, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM protection_snapshots
+                ORDER BY entry_order_link_id
+                """
+            ).fetchall()
+        return tuple(_protection_from_row(row) for row in rows)
 
     def _transition_protection_snapshot(
         self,
@@ -568,6 +652,16 @@ class SqliteExecutionStore:
                 (execution_id,),
             ).fetchone()
         return row is not None
+
+    def _load_all_executions(self) -> tuple[ExecutionUpdate, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM executions
+                ORDER BY executed_at, execution_id
+                """
+            ).fetchall()
+        return tuple(_execution_from_row(row) for row in rows)
 
     def _execution_count(self) -> int:
         with self._connect() as connection:
@@ -799,6 +893,22 @@ def _snapshot_values(snapshot: EntryExecutionSnapshot) -> tuple[object, ...]:
         str(snapshot.entry_fees),
         snapshot.version,
         snapshot.updated_at.isoformat(),
+    )
+
+
+def _execution_from_row(row: sqlite3.Row) -> ExecutionUpdate:
+    maker = row["is_maker"]
+    return ExecutionUpdate(
+        execution_id=str(row["execution_id"]),
+        order_id=str(row["order_id"]),
+        order_link_id=str(row["order_link_id"]),
+        symbol=str(row["symbol"]),
+        side=cast(OrderSide, str(row["side"])),
+        price=Decimal(str(row["price"])),
+        quantity=Decimal(str(row["quantity"])),
+        fee=Decimal(str(row["fee"])),
+        is_maker=None if maker is None else bool(maker),
+        executed_at=datetime.fromisoformat(str(row["executed_at"])),
     )
 
 

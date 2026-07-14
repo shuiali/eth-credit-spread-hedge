@@ -227,6 +227,32 @@ def confirm_stop(
     )
 
 
+def replace_stop_intent(
+    snapshot: ProtectionSnapshot,
+    *,
+    order_link_id: str,
+    trigger_price: Decimal,
+    updated_at: datetime,
+) -> ProtectionSnapshot:
+    if snapshot.open_quantity <= ZERO:
+        raise ValueError("replacement stop requires confirmed open quantity")
+    if snapshot.state not in (
+        LiveExecutionState.ACTIVE_PROTECTED,
+        LiveExecutionState.EXIT_PARTIALLY_FILLED,
+        LiveExecutionState.RECONCILING,
+    ):
+        raise ValueError("snapshot state does not allow replacement protection")
+    return replace(
+        snapshot,
+        state=LiveExecutionState.ACTIVE_UNPROTECTED,
+        stop_order_link_id=order_link_id,
+        stop_order_id=None,
+        stop_trigger_price=trigger_price,
+        version=snapshot.version + 1,
+        updated_at=updated_at,
+    )
+
+
 def add_take_profit_intent(
     snapshot: ProtectionSnapshot,
     *,

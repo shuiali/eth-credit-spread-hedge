@@ -33,10 +33,16 @@ class ExecutionPersistencePort(Protocol):
         order_link_id: str,
     ) -> PlaceOrderRequest | None: ...
 
+    async def load_all_order_intents(self) -> tuple[PlaceOrderRequest, ...]: ...
+
     async def load_entry_snapshot(
         self,
         order_link_id: str,
     ) -> EntryExecutionSnapshot | None: ...
+
+    async def load_all_entry_snapshots(
+        self,
+    ) -> tuple[EntryExecutionSnapshot, ...]: ...
 
     async def transition_entry_snapshot(
         self,
@@ -80,6 +86,14 @@ class ExecutionPersistencePort(Protocol):
         persisted_at: datetime,
     ) -> None: ...
 
+    async def persist_replacement_stop_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: ProtectionSnapshot,
+        persisted_at: datetime,
+    ) -> None: ...
+
     async def load_protection_snapshot(
         self,
         entry_order_link_id: str,
@@ -89,6 +103,10 @@ class ExecutionPersistencePort(Protocol):
         self,
         order_link_id: str,
     ) -> ProtectionSnapshot | None: ...
+
+    async def load_all_protection_snapshots(
+        self,
+    ) -> tuple[ProtectionSnapshot, ...]: ...
 
     async def transition_protection_snapshot(
         self,
@@ -106,3 +124,5 @@ class ExecutionPersistencePort(Protocol):
     ) -> bool: ...
 
     async def has_execution(self, execution_id: str) -> bool: ...
+
+    async def load_all_executions(self) -> tuple[ExecutionUpdate, ...]: ...

@@ -26,10 +26,19 @@ ETH put credit spread with virtual short-perpetual levels.
 - Normalized hashed JSONL capture for ETH perpetual and selected option data.
 - Demo-bound private signing, time sync, account reads, and WebSocket events.
 - Read-only startup snapshots that block unexplained orders or positions.
+- Persistence-first hedge entry, exchange-hosted TP/stop, actual-fill debt, and
+  same-level recovery services with restart reconciliation.
+- Seeded realistic exchange simulation with delays, gaps, partial fills, faults,
+  costs, event-ledger replay, historical inputs, and stress models.
+- Isolated local/demo/shadow/pilot/production profiles and deterministic
+  order-free shadow intents.
+- Health/status endpoints, secret-safe logs, metrics, alerts, and durable
+  soft-pause/strategy-close/emergency-flatten controls.
 
-Perpetual execution fees, slippage, funding, automated exchange order placement,
-automatic spread selection, IV repricing, and live trading remain intentionally
-excluded.
+Automated spread selection and IV repricing remain excluded. Demo/mainnet burn-in,
+legal eligibility, operator approval, and real production order authority remain
+explicitly incomplete deployment gates; passing simulator or CI tests does not
+grant them.
 
 ## Install
 

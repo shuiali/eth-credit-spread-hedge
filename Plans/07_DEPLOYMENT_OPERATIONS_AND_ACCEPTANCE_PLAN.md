@@ -273,14 +273,14 @@ Each includes detection, automatic action, manual action, verification and revie
 
 ## Final acceptance gate
 
-- [ ] Shadow mode is consistent.
+- [x] Shadow mode is consistent.
 - [ ] One-level demo lifecycle repeatedly passes.
 - [ ] Restart/reconciliation passes.
 - [ ] Multiple levels pass demo.
 - [ ] Recovery passes with actual fills.
 - [x] Kill switches pass.
-- [ ] Alerts pass.
-- [ ] Production limits are finite.
-- [ ] Expiry handling passes.
-- [ ] Active state is explainable.
+- [x] Alerts pass.
+- [x] Production limits are finite.
+- [x] Expiry handling passes.
+- [x] Active state is explainable.
 - [ ] Small pilot approval is documented.

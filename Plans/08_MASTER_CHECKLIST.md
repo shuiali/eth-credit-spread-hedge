@@ -146,8 +146,8 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Soft pause.
 - [x] Strategy close.
 - [x] Emergency flatten.
-- [ ] Incident playbooks.
-- [ ] Rollback tested.
+- [x] Incident playbooks.
+- [x] Rollback tested.
 
 ## Deployment gates
 
@@ -162,4 +162,4 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [ ] Finite limits approved.
 - [ ] Pilot config approved.
 - [ ] Legal/account eligibility confirmed.
-- [ ] No zero-loss guarantee represented.
+- [x] No zero-loss guarantee represented.

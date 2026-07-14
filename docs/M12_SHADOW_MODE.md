@@ -29,6 +29,12 @@ risk approval or veto, hypothetical entry/TP/stop, expected TP P&L, and projecte
 stop loss as canonical JSONL. Replaying the same observations through a fresh
 service must produce identical intent objects and SHA-256 decision digests.
 
+The market-data-only shadow runner records the normalized trigger plus the exact
+health and risk snapshots used for each decision. Loading that JSONL capture and
+replaying it through a fresh service must reproduce the complete ordered intent
+set and aggregate digest. The runner has no trading-port field or constructor
+argument.
+
 This milestone proves local shadow determinism and the zero-order architecture.
 The live mainnet shadow burn-in gate remains open until rotated, separately
 permissioned shadow credentials and an operator-approved observation window are

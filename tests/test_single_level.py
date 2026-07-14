@@ -1,0 +1,46 @@
+"""Single-level lifecycle tests."""
+
+from decimal import Decimal
+
+from core.credit_spread import CreditSpread
+from core.hedge_engine import HedgeEngine
+from core.ledger import LedgerEventType
+from core.virtual_levels import LevelState
+
+
+def make_engine() -> HedgeEngine:
+    spread = CreditSpread("3010", "3000", "2980", "1", "20")
+    return HedgeEngine(spread, level_count=1)
+
+
+def test_entry_then_tp_reconciles_exactly() -> None:
+    engine = make_engine()
+    events = engine.run(["3010", "3000", "2980"])
+    level = engine.levels[0]
+
+    assert [(event.event_type, event.price) for event in events] == [
+        (LedgerEventType.ENTRY, Decimal("3000")),
+        (LedgerEventType.TP, Decimal("2980")),
+    ]
+    assert events[0].quantity == Decimal("1")
+    assert events[1].realized_pnl == Decimal("20")
+    assert engine.ledger.realized_hedge_pnl == Decimal("20")
+    assert level.active_quantity == Decimal("0")
+    assert level.state is LevelState.PAID
+
+
+def test_entry_then_stop_reconciles_exactly() -> None:
+    engine = make_engine()
+    events = engine.run(["3010", "3000", "3004.50"])
+    level = engine.levels[0]
+
+    assert [(event.event_type, event.price) for event in events] == [
+        (LedgerEventType.ENTRY, Decimal("3000")),
+        (LedgerEventType.STOP, Decimal("3004.5000")),
+    ]
+    assert events[1].quantity == Decimal("1")
+    assert events[1].realized_pnl == Decimal("-4.5000")
+    assert engine.ledger.realized_hedge_pnl == Decimal("-4.5000")
+    assert level.realized_stop_losses == Decimal("4.5000")
+    assert level.active_quantity == Decimal("0")
+    assert level.state is LevelState.READY

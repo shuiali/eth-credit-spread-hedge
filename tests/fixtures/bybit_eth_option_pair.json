@@ -1,0 +1,165 @@
+{
+  "captured_at_utc": "2026-07-13T17:03:26.233397+00:00",
+  "exchange": "Bybit",
+  "environment": "mainnet-public",
+  "requests": [
+    {
+      "request_url": "https://api.bybit.com/v5/market/instruments-info?category=option&symbol=ETH-31JUL26-1750-P-USDT",
+      "response": {
+        "retCode": 0,
+        "retMsg": "success",
+        "result": {
+          "category": "option",
+          "nextPageCursor": "",
+          "list": [
+            {
+              "symbolId": 365561,
+              "symbol": "ETH-31JUL26-1750-P-USDT",
+              "status": "Trading",
+              "baseCoin": "ETH",
+              "quoteCoin": "USDT",
+              "settleCoin": "USDT",
+              "optionsType": "Put",
+              "launchTime": "1783493400000",
+              "deliveryTime": "1785484800000",
+              "deliveryFeeRate": "0.00015",
+              "priceFilter": {
+                "minPrice": "0.1",
+                "maxPrice": "41000",
+                "tickSize": "0.1"
+              },
+              "lotSizeFilter": {
+                "maxOrderQty": "5000",
+                "minOrderQty": "0.1",
+                "qtyStep": "0.1"
+              },
+              "displayName": "ETHUSDT-31JUL26-1750-P"
+            }
+          ]
+        },
+        "retExtInfo": {},
+        "time": 1783962206574
+      }
+    },
+    {
+      "request_url": "https://api.bybit.com/v5/market/tickers?category=option&symbol=ETH-31JUL26-1750-P-USDT",
+      "response": {
+        "retCode": 0,
+        "retMsg": "SUCCESS",
+        "result": {
+          "category": "option",
+          "list": [
+            {
+              "symbol": "ETH-31JUL26-1750-P-USDT",
+              "bid1Price": "62.4",
+              "bid1Size": "48.3",
+              "bid1Iv": "0.4794",
+              "ask1Price": "62.9",
+              "ask1Size": "61.8",
+              "ask1Iv": "0.4826",
+              "lastPrice": "63.2",
+              "highPrice24h": "68",
+              "lowPrice24h": "39.6",
+              "markPrice": "62.38000001",
+              "indexPrice": "1773.66297243",
+              "markIv": "0.4793",
+              "underlyingPrice": "1774.54",
+              "openInterest": "632",
+              "turnover24h": "1364322.907",
+              "volume24h": "761.6",
+              "totalVolume": "1727",
+              "totalTurnover": "3086097",
+              "delta": "-0.42665899",
+              "gamma": "0.00209858",
+              "vega": "1.52919144",
+              "theta": "-2.07945438",
+              "predictedDeliveryPrice": "0",
+              "change24h": "0.31941545"
+            }
+          ]
+        },
+        "retExtInfo": {},
+        "time": 1783962206868
+      }
+    },
+    {
+      "request_url": "https://api.bybit.com/v5/market/instruments-info?category=option&symbol=ETH-31JUL26-1650-P-USDT",
+      "response": {
+        "retCode": 0,
+        "retMsg": "success",
+        "result": {
+          "category": "option",
+          "nextPageCursor": "",
+          "list": [
+            {
+              "symbolId": 366721,
+              "symbol": "ETH-31JUL26-1650-P-USDT",
+              "status": "Trading",
+              "baseCoin": "ETH",
+              "quoteCoin": "USDT",
+              "settleCoin": "USDT",
+              "optionsType": "Put",
+              "launchTime": "1783783200000",
+              "deliveryTime": "1785484800000",
+              "deliveryFeeRate": "0.00015",
+              "priceFilter": {
+                "minPrice": "0.1",
+                "maxPrice": "41000",
+                "tickSize": "0.1"
+              },
+              "lotSizeFilter": {
+                "maxOrderQty": "5000",
+                "minOrderQty": "0.1",
+                "qtyStep": "0.1"
+              },
+              "displayName": "ETHUSDT-31JUL26-1650-P"
+            }
+          ]
+        },
+        "retExtInfo": {},
+        "time": 1783962207154
+      }
+    },
+    {
+      "request_url": "https://api.bybit.com/v5/market/tickers?category=option&symbol=ETH-31JUL26-1650-P-USDT",
+      "response": {
+        "retCode": 0,
+        "retMsg": "SUCCESS",
+        "result": {
+          "category": "option",
+          "list": [
+            {
+              "symbol": "ETH-31JUL26-1650-P-USDT",
+              "bid1Price": "29.9",
+              "bid1Size": "20.1",
+              "bid1Iv": "0.5107",
+              "ask1Price": "30.1",
+              "ask1Size": "49.1",
+              "ask1Iv": "0.5123",
+              "lastPrice": "29.7",
+              "highPrice24h": "33.3",
+              "lowPrice24h": "20.1",
+              "markPrice": "30.0643528",
+              "indexPrice": "1773.66297243",
+              "markIv": "0.5121",
+              "underlyingPrice": "1774.48",
+              "openInterest": "285.3",
+              "turnover24h": "599005.337",
+              "volume24h": "334.1",
+              "totalVolume": "407",
+              "totalTurnover": "731090",
+              "delta": "-0.24112615",
+              "gamma": "0.00156104",
+              "vega": "1.21520606",
+              "theta": "-1.76549962",
+              "predictedDeliveryPrice": "0",
+              "change24h": "0.30263158"
+            }
+          ]
+        },
+        "retExtInfo": {},
+        "time": 1783962207447
+      }
+    }
+  ]
+}

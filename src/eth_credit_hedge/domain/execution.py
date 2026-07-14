@@ -103,6 +103,27 @@ class PrivateConnectionState(str, Enum):
     RECONNECTING = "RECONNECTING"
 
 
+class UncertainOrderOutcomeError(RuntimeError):
+    """A mutation may have reached the exchange and must be reconciled."""
+
+    def __init__(
+        self,
+        *,
+        order_link_id: str | None,
+        operation: str,
+    ) -> None:
+        self.order_link_id = order_link_id
+        self.operation = operation
+        identity = (
+            f" for orderLinkId {order_link_id}"
+            if order_link_id is not None
+            else ""
+        )
+        super().__init__(
+            f"{operation} outcome is uncertain{identity}; reconcile before retrying"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PlaceOrderRequest:
     category: Category

@@ -52,7 +52,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Execution stream.
 - [x] Position stream.
 - [x] Idempotent client IDs.
-- [ ] Execution deduplication.
+- [x] Execution deduplication.
 
 ## One-level demo
 
@@ -77,9 +77,9 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [ ] Event journal.
 - [ ] Event versions.
 - [ ] Snapshots.
-- [ ] Migrations.
-- [ ] Intent persisted before request.
-- [ ] Execution persisted atomically.
+- [x] Migrations.
+- [x] Intent persisted before request.
+- [x] Execution persisted atomically.
 - [ ] Startup replay.
 - [ ] Exchange query.
 - [ ] Order comparison.
@@ -89,19 +89,19 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Risk
 
-- [ ] Independent risk engine.
-- [ ] Maximum quantity.
-- [ ] Maximum notional.
-- [ ] Maximum margin use.
-- [ ] Minimum liquidation distance.
-- [ ] Maximum debt.
-- [ ] Maximum stop.
-- [ ] Cycle loss.
-- [ ] Daily loss.
-- [ ] Entries per level.
-- [ ] Active-level limit.
-- [ ] Stale-data veto.
-- [ ] Reconciliation veto.
+- [x] Independent risk engine.
+- [x] Maximum quantity.
+- [x] Maximum notional.
+- [x] Maximum margin use.
+- [x] Minimum liquidation distance.
+- [x] Maximum debt.
+- [x] Maximum stop.
+- [x] Cycle loss.
+- [x] Daily loss.
+- [x] Entries per level.
+- [x] Active-level limit.
+- [x] Stale-data veto.
+- [x] Reconciliation veto.
 - [ ] Explicit locked-level policy.
 
 ## Multiple levels and recovery

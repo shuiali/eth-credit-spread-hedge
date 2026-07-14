@@ -45,6 +45,7 @@ files = [
     "src/eth_credit_hedge/data",
     "src/eth_credit_hedge/domain",
     "src/eth_credit_hedge/infrastructure/bybit",
+    "src/eth_credit_hedge/infrastructure/persistence",
     "src/eth_credit_hedge/infrastructure/recording",
     "src/eth_credit_hedge/ports",
 ]

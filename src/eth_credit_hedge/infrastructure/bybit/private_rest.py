@@ -26,6 +26,7 @@ from eth_credit_hedge.domain.execution import (
     OrderSide,
     OrderType,
     PlaceOrderRequest,
+    UncertainOrderOutcomeError,
     WalletBalance,
     WalletState,
 )
@@ -62,25 +63,10 @@ class PreparedBybitRequest:
         )
 
 
-class BybitUncertainRequestError(RuntimeError):
+class BybitUncertainRequestError(UncertainOrderOutcomeError):
     """A mutation may have reached Bybit but no response was received."""
 
-    def __init__(
-        self,
-        *,
-        order_link_id: str | None,
-        operation: str,
-    ) -> None:
-        self.order_link_id = order_link_id
-        self.operation = operation
-        identity = (
-            f" for orderLinkId {order_link_id}"
-            if order_link_id is not None
-            else ""
-        )
-        super().__init__(
-            f"Bybit {operation} outcome is uncertain{identity}; reconcile before retrying"
-        )
+    pass
 
 
 class BybitPrivateRestClient:

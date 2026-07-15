@@ -584,6 +584,7 @@ async def run_d6_recovery() -> DemoD6Result:
     await store.initialize()
     await _synchronize_clock(private)
     await _apply_recorded_emergency_exits(store, clock)
+    await _repair_recorded_d6_recovery_debts(store, private, clock)
     await _reconcile_late_option_longs(
         store=store,
         private=private,
@@ -667,7 +668,7 @@ async def _run_recovery_perp_cycle(
         side="Sell",
         policy=PriceQuantizationPolicy.PASSIVE,
     )
-    tp_distance = max(Decimal("2.75"), tick * Decimal("275"))
+    tp_distance = max(Decimal("2.50"), tick * Decimal("250"))
     tp_price = entry_price - tp_distance
     if tp_price <= ZERO:
         raise DemoMutationRefusedError("D6 TP price is invalid")
@@ -930,6 +931,7 @@ async def _run_recovery_perp_cycle(
         restarted_lifecycle,
         recovery_entry_id,
         private,
+        poll_cycles=60,
     )
     if recovery_closed.state is LiveExecutionState.CLOSED_STOP:
         recovery_projected_debt = max(
@@ -1105,9 +1107,13 @@ async def _await_d6_exit(
     lifecycle: OneLevelLifecycleService,
     entry_order_link_id: str,
     private: BybitPrivateRestClient,
+    *,
+    poll_cycles: int = 20,
 ) -> ProtectionSnapshot:
+    if poll_cycles <= 0:
+        raise ValueError("D6 exit poll cycles must be positive")
     last_error: ExitFillNotConfirmedError | None = None
-    for _ in range(20):
+    for _ in range(poll_cycles):
         await _synchronize_clock(private)
         try:
             return await lifecycle.await_exit(entry_order_link_id)
@@ -1118,6 +1124,52 @@ async def _await_d6_exit(
     if last_error is None:
         raise AssertionError("D6 exit wait did not run")
     raise last_error
+
+
+async def _repair_recorded_d6_recovery_debts(
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    clock: ServerClock,
+) -> None:
+    recovery_service = SameLevelRecoveryService(
+        entry_service=OneLevelEntryService(
+            trading=private,
+            store=store,
+            clock=lambda: _clock_time(clock),
+        ),
+        store=store,
+        planner=SameLevelRecoveryPlanner(RiskEngine()),
+        clock=lambda: _clock_time(clock),
+    )
+    for protection in await store.load_all_protection_snapshots():
+        entry_id = ClientOrderId.parse(protection.entry_order_link_id)
+        if (
+            entry_id.strategy_instance != STRATEGY_INSTANCE
+            or entry_id.role is not ClientOrderRole.HEDGE_ENTRY
+            or entry_id.attempt != 2
+            or entry_id.level != entry_id.cycle
+            or protection.state
+            not in (LiveExecutionState.CLOSED_STOP, LiveExecutionState.ERROR)
+            or protection.confirmed_recovery_debt == ZERO
+        ):
+            continue
+        debt = await store.load_recovery_debt_snapshot(entry_id.level)
+        if debt is None or debt.debt.allocated_debt == ZERO:
+            continue
+        projected_debt = max(
+            (
+                protection.stop_trigger_price
+                - protection.average_entry_price
+            )
+            * protection.entry_quantity
+            + protection.entry_fees * Decimal("2"),
+            ZERO,
+        )
+        await recovery_service.record_recovery_stop_debt(
+            level_id=entry_id.level,
+            actual_stop_debt=protection.confirmed_recovery_debt,
+            projected_debt=projected_debt,
+        )
 
 
 def _d6_order_id(

@@ -841,6 +841,7 @@ async def _run_recovery_perp_cycle(
 
     crossing = await _await_d6_recovery_crossing(
         public=public,
+        private=private,
         clock=clock,
         deployment=deployment,
         option=option,
@@ -1031,6 +1032,7 @@ async def _run_recovery_perp_cycle(
 async def _await_d6_recovery_crossing(
     *,
     public: BybitPublicRestClient,
+    private: BybitPrivateRestClient,
     clock: ServerClock,
     deployment: EnvironmentProfile,
     option: OptionSpreadExecutionSnapshot,
@@ -1046,9 +1048,15 @@ async def _await_d6_recovery_crossing(
     previous_price: Decimal | None = None
     connection_generation: int | None = None
     armed = False
+    loop = asyncio.get_running_loop()
+    await _synchronize_clock(private)
+    last_clock_sync = loop.time()
     try:
         async with asyncio.timeout(600):
             async for trade in trade_stream:
+                if loop.time() - last_clock_sync >= 30:
+                    await _synchronize_clock(private)
+                    last_clock_sync = loop.time()
                 if _quotes_need_refresh(quote_timestamps, clock):
                     quotes = await public.get_option_chain("ETH")
                     quote_timestamps = _option_quote_timestamps(option, quotes)

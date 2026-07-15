@@ -6,15 +6,19 @@ import argparse
 import asyncio
 import json
 import os
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import cast
 
 from eth_credit_hedge.application.emergency_flatten import EmergencyFlattenService
 from eth_credit_hedge.application.execution_hash import execution_payload_hash
 from eth_credit_hedge.application.one_level_entry import OneLevelEntryService
+from eth_credit_hedge.application.one_level_coordinator import OneLevelCoordinator
 from eth_credit_hedge.application.one_level_lifecycle import (
     OneLevelLifecycleService,
+    ProtectedOneLevel,
 )
 from eth_credit_hedge.application.option_spread_entry import (
     OptionSpreadEntryPlan,
@@ -37,6 +41,7 @@ from eth_credit_hedge.config.deployment import (
     load_all_environment_profiles,
 )
 from eth_credit_hedge.config.schema import RuntimeEnvironment
+from eth_credit_hedge.core.virtual_levels import HedgeLevel
 from eth_credit_hedge.domain.client_order_ids import (
     ClientOrderId,
     ClientOrderRole,
@@ -52,7 +57,11 @@ from eth_credit_hedge.domain.instrument_rules import (
     PriceQuantizationPolicy,
     quantize_limit_price,
 )
-from eth_credit_hedge.domain.instruments import InstrumentSpec, OptionMarketQuote
+from eth_credit_hedge.domain.instruments import (
+    InstrumentSpec,
+    OptionContract,
+    OptionMarketQuote,
+)
 from eth_credit_hedge.domain.live_option_execution import (
     OptionSpreadExecutionSnapshot,
 )
@@ -61,6 +70,19 @@ from eth_credit_hedge.domain.option_lifecycle import (
     UnmatchedLongPolicy,
 )
 from eth_credit_hedge.domain.option_position import OptionPositionState
+from eth_credit_hedge.domain.option_position import (
+    OptionLegPosition,
+    PutCreditSpreadPosition,
+)
+from eth_credit_hedge.domain.market_data import (
+    MarketDataHealthPolicy,
+    MarketDataHealthResult,
+    MarketDataHealthSnapshot,
+    TradeEvent,
+    TriggerPriceRouter,
+    TriggerPriceSource,
+    evaluate_market_data_health,
+)
 from eth_credit_hedge.domain.protected_execution import (
     ProtectionSnapshot,
     apply_emergency_exit_execution,
@@ -81,6 +103,9 @@ from eth_credit_hedge.infrastructure.bybit.private_rest import (
 from eth_credit_hedge.infrastructure.bybit.public_rest import (
     BybitPublicRestClient,
 )
+from eth_credit_hedge.infrastructure.bybit.public_market_data import (
+    BybitPublicMarketData,
+)
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     SqliteExecutionStore,
 )
@@ -88,6 +113,7 @@ from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
 
 MUTATION_GATE_ENV = "RUN_BYBIT_DEMO_MUTATIONS"
 D3_MUTATION_TOKEN = "D3_MANUAL_ONE_LEVEL"
+D4_MUTATION_TOKEN = "D4_AUTOMATIC_ONE_LEVEL"
 STRATEGY_INSTANCE = "D3"
 ZERO = Decimal("0")
 
@@ -142,6 +168,60 @@ class DemoD3Result:
             separators=(",", ":"),
             sort_keys=True,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DemoD4Result:
+    option_cycle_id: str
+    perp_cycle_number: int
+    trigger_source: str
+    armed_price: Decimal
+    level_entry_price: Decimal
+    crossing_price: Decimal
+    crossing_time_utc: datetime
+    connection_generation: int
+    request_quantity: Decimal
+    average_entry_price: Decimal
+    stop_trigger_price: Decimal
+    protected_restart_status: str
+    final_state: str
+    realized_pnl: Decimal
+    final_reconciliation_status: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "option_cycle_id": self.option_cycle_id,
+                "perp_cycle_number": self.perp_cycle_number,
+                "trigger_source": self.trigger_source,
+                "armed_price": str(self.armed_price),
+                "level_entry_price": str(self.level_entry_price),
+                "crossing_price": str(self.crossing_price),
+                "crossing_time_utc": self.crossing_time_utc.isoformat(),
+                "connection_generation": self.connection_generation,
+                "request_quantity": str(self.request_quantity),
+                "average_entry_price": str(self.average_entry_price),
+                "stop_trigger_price": str(self.stop_trigger_price),
+                "protected_restart_status": self.protected_restart_status,
+                "final_state": self.final_state,
+                "realized_pnl": str(self.realized_pnl),
+                "final_reconciliation_status": (
+                    self.final_reconciliation_status
+                ),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProtectedCycleOutcome:
+    opened: ProtectedOneLevel
+    final_state: LiveExecutionState
+    realized_pnl: Decimal
+    confirmed_recovery_debt: Decimal
+    restart_status: str
+    final_reconciliation_status: str
 
 
 async def run_d3_manual() -> DemoD3Result:
@@ -218,6 +298,426 @@ async def run_d3_manual() -> DemoD3Result:
             cycle_number=cycle_number,
         )
         raise
+
+
+async def run_d4_automatic() -> DemoD4Result:
+    if os.environ.get(MUTATION_GATE_ENV) != D4_MUTATION_TOKEN:
+        raise DemoMutationRefusedError(
+            f"set {MUTATION_GATE_ENV}={D4_MUTATION_TOKEN} explicitly"
+        )
+    deployment = _demo_deployment_profile()
+    if not deployment.external_order_mutations_enabled:
+        raise DemoMutationRefusedError("demo profile disables order mutations")
+    credentials = load_bybit_demo_profile()
+    if (
+        credentials.rest_base_url != deployment.rest_base_url
+        or credentials.private_websocket_url
+        != deployment.private_websocket_url
+    ):
+        raise DemoMutationRefusedError("demo credential endpoints do not match")
+
+    clock = ServerClock(
+        max_absolute_offset_ms=deployment.maximum_clock_drift_ms,
+    )
+    private = BybitPrivateRestClient(profile=credentials, clock=clock)
+    public = BybitPublicRestClient()
+    store = SqliteExecutionStore(deployment.database_path)
+    await store.initialize()
+    await _synchronize_clock(private)
+    await _apply_recorded_emergency_exits(store, clock)
+    await _reconcile_late_option_longs(
+        store=store,
+        private=private,
+        clock=clock,
+    )
+    cycle_number = _next_cycle_number(await store.load_all_order_intents())
+    initial_report, initial_exchange = await _reconcile(
+        store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(initial_report, "initial D4 reconciliation")
+    _require_one_way_account(initial_exchange)
+    await _ensure_option_margin_mode(private)
+
+    try:
+        option = await _open_or_load_option_spread(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            cycle_number=cycle_number,
+            deployment=deployment,
+        )
+        await _synchronize_clock(private)
+        option_report, _ = await _reconcile(
+            store,
+            private,
+            clock,
+            cycle_number=cycle_number,
+        )
+        _require_matched(option_report, "D4 option reconciliation")
+        return await _run_automatic_perp_cycle(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            deployment=deployment,
+            option=option,
+            cycle_number=cycle_number,
+        )
+    except BaseException:
+        await _make_perp_safe(
+            store=store,
+            private=private,
+            clock=clock,
+            cycle_number=cycle_number,
+        )
+        raise
+
+
+async def _run_automatic_perp_cycle(
+    *,
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    public: BybitPublicRestClient,
+    clock: ServerClock,
+    deployment: EnvironmentProfile,
+    option: OptionSpreadExecutionSnapshot,
+    cycle_number: int,
+) -> DemoD4Result:
+    instrument, option_instruments, option_quotes, wallet = await asyncio.gather(
+        public.get_instrument("ETHUSDT"),
+        public.list_instruments("option", base_coin="ETH"),
+        public.get_option_chain("ETH"),
+        private.get_wallet_state(),
+    )
+    if instrument.status != "Trading":
+        raise DemoMutationRefusedError("ETHUSDT is not Trading")
+    option_position = _put_spread_position(option, option_instruments)
+    quote_timestamps = _option_quote_timestamps(option, option_quotes)
+    entry_id = str(
+        ClientOrderId.new(
+            STRATEGY_INSTANCE,
+            cycle_number,
+            1,
+            ClientOrderRole.HEDGE_ENTRY,
+            1,
+        )
+    )
+    stop_id = str(
+        ClientOrderId.new(
+            STRATEGY_INSTANCE,
+            cycle_number,
+            1,
+            ClientOrderRole.HEDGE_STOP,
+            1,
+        )
+    )
+    tp_id = str(
+        ClientOrderId.new(
+            STRATEGY_INSTANCE,
+            cycle_number,
+            1,
+            ClientOrderRole.HEDGE_TP,
+            1,
+        )
+    )
+    entry_service, _, lifecycle = _lifecycle_services(
+        store=store,
+        private=private,
+        instrument=instrument,
+        clock=clock,
+    )
+    market_data = BybitPublicMarketData(rest=public)
+    trade_stream = cast(
+        AsyncGenerator[TradeEvent, None],
+        market_data.stream_trades("ETHUSDT"),
+    )
+    try:
+        first_trade = await asyncio.wait_for(anext(trade_stream), timeout=20)
+        level_entry = first_trade.price - instrument.price_filter.tick_size
+        if level_entry <= ZERO:
+            raise DemoMutationRefusedError("automatic level entry is invalid")
+        level = HedgeLevel(
+            level_id=1,
+            entry_price=level_entry,
+            tp_price=level_entry * Decimal("0.995"),
+            stop_price=level_entry * Decimal("1.005"),
+            option_budget=(
+                option.matched_quantity
+                * level_entry
+                * Decimal("0.005")
+            ),
+        )
+        coordinator = OneLevelCoordinator(
+            entry_service=entry_service,
+            option_position=option_position,
+            level=level,
+            instrument=instrument,
+            risk_engine=RiskEngine(),
+            risk_limits=deployment.risk_limits,
+            order_link_id_factory=lambda: entry_id,
+        )
+        router = TriggerPriceRouter(TriggerPriceSource.LAST_TRADE)
+        first_trigger = router.from_trade(first_trade)
+        if first_trigger is None:
+            raise AssertionError("LAST_TRADE router rejected a trade")
+        debt, realized_loss = await _demo_loss_state(store)
+        first_health = _demo_market_health(
+            first_trade,
+            quote_timestamps,
+            deployment,
+            clock,
+        )
+        armed = await coordinator.on_trigger(
+            first_trigger,
+            first_health,
+            _demo_risk_state(
+                quantity=option.matched_quantity,
+                price=first_trade.price,
+                wallet_equity=wallet.total_equity,
+                debt=debt,
+                realized_loss=realized_loss,
+            ),
+        )
+        if armed.triggered or armed.reasons:
+            raise DemoMutationRefusedError(
+                "first D4 trade did not arm a clean crossing segment"
+            )
+
+        crossing_trade: TradeEvent | None = None
+        trigger_result = None
+        async with asyncio.timeout(60):
+            async for trade in trade_stream:
+                if _quotes_need_refresh(quote_timestamps, clock):
+                    option_quotes = await public.get_option_chain("ETH")
+                    quote_timestamps = _option_quote_timestamps(
+                        option,
+                        option_quotes,
+                    )
+                trigger = router.from_trade(trade)
+                if trigger is None:
+                    raise AssertionError("LAST_TRADE router rejected a trade")
+                health = _demo_market_health(
+                    trade,
+                    quote_timestamps,
+                    deployment,
+                    clock,
+                )
+                result = await coordinator.on_trigger(
+                    trigger,
+                    health,
+                    _demo_risk_state(
+                        quantity=option.matched_quantity,
+                        price=trade.price,
+                        wallet_equity=wallet.total_equity,
+                        debt=debt,
+                        realized_loss=realized_loss,
+                    ),
+                )
+                if result.triggered:
+                    crossing_trade = trade
+                    trigger_result = result
+                    break
+    except TimeoutError as exc:
+        raise DemoMutationRefusedError(
+            "no fresh downward LAST_TRADE crossing arrived within 60 seconds"
+        ) from exc
+    finally:
+        await trade_stream.aclose()
+
+    if (
+        crossing_trade is None
+        or trigger_result is None
+        or trigger_result.snapshot is None
+        or trigger_result.request is None
+    ):
+        raise DemoMutationRefusedError("D4 crossing did not submit an entry")
+    opened = await lifecycle.protect_submitted_entry(
+        trigger_result.snapshot,
+        stop_order_link_id=stop_id,
+        take_profit_order_link_id=tp_id,
+        stop_rate=Decimal("0.005"),
+        take_profit_price=level.tp_price,
+    )
+    await _verify_liquidation_distance(
+        private,
+        deployment=deployment,
+        instrument=instrument,
+    )
+    outcome = await _finish_protected_cycle(
+        private=private,
+        public=public,
+        clock=clock,
+        deployment=deployment,
+        instrument=instrument,
+        opened=opened,
+        entry_order_link_id=entry_id,
+        take_profit_order_link_id=tp_id,
+        cycle_number=cycle_number,
+    )
+    average_entry = opened.entry.average_entry_price
+    if average_entry is None:
+        raise AssertionError("D4 entry has no actual average price")
+    return DemoD4Result(
+        option_cycle_id=option.cycle_id,
+        perp_cycle_number=cycle_number,
+        trigger_source=TriggerPriceSource.LAST_TRADE.value,
+        armed_price=first_trade.price,
+        level_entry_price=level.entry_price,
+        crossing_price=crossing_trade.price,
+        crossing_time_utc=crossing_trade.timestamp_utc,
+        connection_generation=crossing_trade.connection_generation,
+        request_quantity=trigger_result.request.quantity,
+        average_entry_price=average_entry,
+        stop_trigger_price=opened.protection.stop_trigger_price,
+        protected_restart_status=outcome.restart_status,
+        final_state=outcome.final_state.value,
+        realized_pnl=outcome.realized_pnl,
+        final_reconciliation_status=outcome.final_reconciliation_status,
+    )
+
+
+def _put_spread_position(
+    snapshot: OptionSpreadExecutionSnapshot,
+    instruments: tuple[InstrumentSpec, ...],
+) -> PutCreditSpreadPosition:
+    by_symbol = {instrument.symbol: instrument for instrument in instruments}
+    long_instrument = by_symbol.get(snapshot.long_symbol)
+    short_instrument = by_symbol.get(snapshot.short_symbol)
+    if long_instrument is None or short_instrument is None:
+        raise DemoMutationRefusedError("open option instruments are unavailable")
+
+    def contract(instrument: InstrumentSpec) -> OptionContract:
+        return OptionContract(
+            symbol=instrument.symbol,
+            base_coin=instrument.base_coin,
+            quote_coin=instrument.quote_coin,
+            settle_coin=instrument.settle_coin,
+            option_type="Put",
+            strike=_strike(instrument.symbol),
+            expiry_time_utc=_required_delivery(instrument),
+            contract_multiplier=instrument.contract_multiplier,
+        )
+
+    return PutCreditSpreadPosition(
+        short_put=OptionLegPosition(
+            contract=contract(short_instrument),
+            side="Short",
+            requested_quantity=snapshot.requested_quantity,
+            filled_quantity=snapshot.short_filled_quantity,
+            average_entry_price=snapshot.short_average_price,
+            fees_paid=snapshot.short_fees,
+        ),
+        long_put=OptionLegPosition(
+            contract=contract(long_instrument),
+            side="Long",
+            requested_quantity=snapshot.requested_quantity,
+            filled_quantity=snapshot.long_filled_quantity,
+            average_entry_price=snapshot.long_average_price,
+            fees_paid=snapshot.long_fees,
+        ),
+        state=snapshot.state,
+        opened_time_utc=snapshot.opened_time_utc,
+    )
+
+
+def _option_quote_timestamps(
+    snapshot: OptionSpreadExecutionSnapshot,
+    quotes: tuple[OptionMarketQuote, ...],
+) -> tuple[datetime, ...]:
+    by_symbol = {quote.symbol: quote for quote in quotes}
+    try:
+        return (
+            by_symbol[snapshot.long_symbol].timestamp_utc,
+            by_symbol[snapshot.short_symbol].timestamp_utc,
+        )
+    except KeyError as exc:
+        raise DemoMutationRefusedError(
+            "open option quotes are unavailable"
+        ) from exc
+
+
+def _quotes_need_refresh(
+    timestamps: tuple[datetime, ...],
+    clock: ServerClock,
+) -> bool:
+    return any(
+        (_clock_time(clock) - timestamp).total_seconds() > 5
+        for timestamp in timestamps
+    )
+
+
+def _demo_market_health(
+    trade: TradeEvent,
+    option_quote_timestamps: tuple[datetime, ...],
+    deployment: EnvironmentProfile,
+    clock: ServerClock,
+) -> MarketDataHealthResult:
+    maximum_trigger_age = Decimal(deployment.maximum_market_data_age_ms) / 1000
+    return evaluate_market_data_health(
+        MarketDataHealthSnapshot(
+            trigger_timestamp_utc=trade.timestamp_utc,
+            instrument_loaded=True,
+            websocket_connected=True,
+            option_quote_timestamps_utc=option_quote_timestamps,
+            order_book_synchronized=False,
+            order_book_timestamp_utc=None,
+            clock_synchronized=clock.sample is not None,
+        ),
+        MarketDataHealthPolicy(
+            max_trigger_age_seconds=maximum_trigger_age,
+            max_option_quote_age_seconds=Decimal("10"),
+            max_order_book_age_seconds=maximum_trigger_age,
+        ),
+        as_of_utc=_clock_time(clock),
+        order_book_required=False,
+    )
+
+
+async def _demo_loss_state(
+    store: SqliteExecutionStore,
+) -> tuple[Decimal, Decimal]:
+    protections = await store.load_all_protection_snapshots()
+    debt = sum(
+        (snapshot.confirmed_recovery_debt for snapshot in protections),
+        start=ZERO,
+    )
+    realized_loss = sum(
+        (max(-snapshot.realized_pnl, ZERO) for snapshot in protections),
+        start=ZERO,
+    )
+    return debt, realized_loss
+
+
+def _demo_risk_state(
+    *,
+    quantity: Decimal,
+    price: Decimal,
+    wallet_equity: Decimal,
+    debt: Decimal,
+    realized_loss: Decimal,
+) -> RiskState:
+    if wallet_equity <= ZERO:
+        raise DemoMutationRefusedError("demo wallet has no positive equity")
+    notional = quantity * price
+    return RiskState(
+        current_perp_quantity=ZERO,
+        current_perp_notional=ZERO,
+        post_trade_margin_usage=notional / wallet_equity,
+        post_trade_liquidation_distance=Decimal("1"),
+        confirmed_recovery_debt=debt,
+        realized_cycle_loss=realized_loss,
+        daily_realized_loss=realized_loss,
+        entries_for_level=0,
+        active_levels=0,
+        order_requests_last_minute=0,
+        consecutive_reconciliation_failures=0,
+        market_data_fresh=True,
+        reconciliation_succeeded=True,
+    )
 
 
 async def _open_or_load_option_spread(
@@ -518,7 +1018,52 @@ async def _run_protected_perp_cycle(
         deployment=deployment,
         instrument=instrument,
     )
+    outcome = await _finish_protected_cycle(
+        private=private,
+        public=public,
+        clock=clock,
+        deployment=deployment,
+        instrument=instrument,
+        opened=opened,
+        entry_order_link_id=entry_id,
+        take_profit_order_link_id=tp_id,
+        cycle_number=cycle_number,
+    )
+    average_entry = opened.entry.average_entry_price
+    if average_entry is None:
+        raise AssertionError("confirmed entry must have an average price")
+    return DemoD3Result(
+        option_cycle_id=option.cycle_id,
+        option_state=option.state.value,
+        option_matched_quantity=option.matched_quantity,
+        option_actual_net_credit=option.actual_net_credit,
+        perp_cycle_number=cycle_number,
+        entry_order_link_id=entry_id,
+        entry_quantity=opened.entry.filled_quantity,
+        average_entry_price=average_entry,
+        stop_order_link_id=stop_id,
+        stop_trigger_price=opened.protection.stop_trigger_price,
+        take_profit_order_link_id=tp_id,
+        protected_restart_status=outcome.restart_status,
+        final_state=outcome.final_state.value,
+        realized_pnl=outcome.realized_pnl,
+        confirmed_recovery_debt=outcome.confirmed_recovery_debt,
+        final_reconciliation_status=outcome.final_reconciliation_status,
+    )
 
+
+async def _finish_protected_cycle(
+    *,
+    private: BybitPrivateRestClient,
+    public: BybitPublicRestClient,
+    clock: ServerClock,
+    deployment: EnvironmentProfile,
+    instrument: InstrumentSpec,
+    opened: ProtectedOneLevel,
+    entry_order_link_id: str,
+    take_profit_order_link_id: str,
+    cycle_number: int,
+) -> _ProtectedCycleOutcome:
     await _synchronize_clock(private)
     restarted_store = SqliteExecutionStore(deployment.database_path)
     await restarted_store.initialize()
@@ -549,14 +1094,14 @@ async def _run_protected_perp_cycle(
             AmendOrderRequest(
                 category="linear",
                 symbol="ETHUSDT",
-                order_link_id=tp_id,
+                order_link_id=take_profit_order_link_id,
                 price=marketable_tp,
             )
         )
         await restarted_store.record_acknowledgement(acknowledgement)
     except (BybitUnknownOrderError, UncertainOrderOutcomeError):
         pass
-    closed = await restarted_lifecycle.await_exit(entry_id)
+    closed = await restarted_lifecycle.await_exit(entry_order_link_id)
     if closed.state not in (
         LiveExecutionState.CLOSED_TP,
         LiveExecutionState.CLOSED_STOP,
@@ -577,26 +1122,13 @@ async def _run_protected_perp_cycle(
         position.category == "linear" and position.quantity > ZERO
         for position in final_exchange.positions
     ):
-        raise RuntimeError("ETHUSDT position remains after D3 exit")
-    average_entry = opened.entry.average_entry_price
-    if average_entry is None:
-        raise AssertionError("confirmed entry must have an average price")
-    return DemoD3Result(
-        option_cycle_id=option.cycle_id,
-        option_state=option.state.value,
-        option_matched_quantity=option.matched_quantity,
-        option_actual_net_credit=option.actual_net_credit,
-        perp_cycle_number=cycle_number,
-        entry_order_link_id=entry_id,
-        entry_quantity=opened.entry.filled_quantity,
-        average_entry_price=average_entry,
-        stop_order_link_id=stop_id,
-        stop_trigger_price=opened.protection.stop_trigger_price,
-        take_profit_order_link_id=tp_id,
-        protected_restart_status=restart_report.status.value,
-        final_state=closed.state.value,
+        raise RuntimeError("ETHUSDT position remains after controlled exit")
+    return _ProtectedCycleOutcome(
+        opened=opened,
+        final_state=closed.state,
         realized_pnl=closed.realized_pnl,
         confirmed_recovery_debt=closed.confirmed_recovery_debt,
+        restart_status=restart_report.status.value,
         final_reconciliation_status=final_report.status.value,
     )
 
@@ -1113,10 +1645,13 @@ def _strike(symbol: str) -> Decimal:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("d3-manual",))
+    parser.add_argument("stage", choices=("d3-manual", "d4-automatic"))
     args = parser.parse_args()
     if args.stage == "d3-manual":
         print(asyncio.run(run_d3_manual()).to_json())
+        return 0
+    if args.stage == "d4-automatic":
+        print(asyncio.run(run_d4_automatic()).to_json())
         return 0
     raise AssertionError("argparse returned an unknown demo stage")
 

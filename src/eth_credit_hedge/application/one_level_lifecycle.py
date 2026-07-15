@@ -120,6 +120,23 @@ class OneLevelLifecycleService:
             raise ValueError("; ".join(reasons))
 
         entry = await self._entry.submit_entry(request)
+        return await self.protect_submitted_entry(
+            entry,
+            stop_order_link_id=stop_order_link_id,
+            take_profit_order_link_id=take_profit_order_link_id,
+            stop_rate=stop_rate,
+            take_profit_price=take_profit_price,
+        )
+
+    async def protect_submitted_entry(
+        self,
+        entry: EntryExecutionSnapshot,
+        *,
+        stop_order_link_id: str,
+        take_profit_order_link_id: str,
+        stop_rate: Decimal,
+        take_profit_price: Decimal,
+    ) -> ProtectedOneLevel:
         entry = await self._await_entry_fill(entry)
         positions = await self._account.get_positions("linear", "ETHUSDT")
         if not await self._entry.reconcile_position(positions):

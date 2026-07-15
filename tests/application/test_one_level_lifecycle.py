@@ -80,6 +80,7 @@ async def run_lifecycle(
     *,
     partial: bool,
     duplicate: bool,
+    externally_submitted: bool = False,
 ) -> tuple[SimulatedExchange, SqliteExecutionStore, LiveExecutionState]:
     exchange = SimulatedExchange(
         instrument=instrument(),
@@ -120,22 +121,33 @@ async def run_lifecycle(
         fill_attempts=5,
         fill_interval_seconds=0,
     )
-    opened = await lifecycle.open_and_protect(
-        PlaceOrderRequest(
-            category="linear",
-            symbol="ETHUSDT",
-            side="Sell",
-            order_type="Market",
-            quantity=Decimal("0.02") if partial else Decimal("0.01"),
-            order_link_id=ENTRY_ID,
-            time_in_force="IOC",
-        ),
-        stop_order_link_id=STOP_ID,
-        take_profit_order_link_id=TP_ID,
-        stop_rate=Decimal("0.01"),
-        take_profit_price=Decimal("2990"),
-        reference_price=Decimal("3000"),
+    request = PlaceOrderRequest(
+        category="linear",
+        symbol="ETHUSDT",
+        side="Sell",
+        order_type="Market",
+        quantity=Decimal("0.02") if partial else Decimal("0.01"),
+        order_link_id=ENTRY_ID,
+        time_in_force="IOC",
     )
+    if externally_submitted:
+        submitted = await entry.submit_entry(request)
+        opened = await lifecycle.protect_submitted_entry(
+            submitted,
+            stop_order_link_id=STOP_ID,
+            take_profit_order_link_id=TP_ID,
+            stop_rate=Decimal("0.01"),
+            take_profit_price=Decimal("2990"),
+        )
+    else:
+        opened = await lifecycle.open_and_protect(
+            request,
+            stop_order_link_id=STOP_ID,
+            take_profit_order_link_id=TP_ID,
+            stop_rate=Decimal("0.01"),
+            take_profit_price=Decimal("2990"),
+            reference_price=Decimal("3000"),
+        )
 
     assert opened.entry.state is LiveExecutionState.ACTIVE_UNPROTECTED
     assert opened.protection.state is LiveExecutionState.ACTIVE_PROTECTED
@@ -186,3 +198,19 @@ def test_partial_and_duplicate_deliveries_remain_idempotent(tmp_path: Path) -> N
 
     assert state is LiveExecutionState.CLOSED_TP
     assert asyncio.run(store.execution_count()) == 4
+
+
+def test_coordinator_submitted_entry_can_continue_through_protection(
+    tmp_path: Path,
+) -> None:
+    _, store, state = asyncio.run(
+        run_lifecycle(
+            tmp_path / "coordinator.sqlite3",
+            partial=False,
+            duplicate=False,
+            externally_submitted=True,
+        )
+    )
+
+    assert state is LiveExecutionState.CLOSED_TP
+    assert asyncio.run(store.execution_count()) == 2

@@ -36,6 +36,9 @@ from eth_credit_hedge.domain.live_execution import (
     apply_entry_execution,
     transition_entry_snapshot,
 )
+from eth_credit_hedge.domain.protected_execution import (
+    apply_emergency_exit_execution,
+)
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     SqliteExecutionStore,
 )
@@ -46,6 +49,7 @@ ENTRY_ID = "ECH-01-C0001-L01-ENTRY-A01-9F3C"
 STOP_ID = "ECH-01-C0001-L01-STOP-A01-9F3C"
 TP_ID = "ECH-01-C0001-L01-TP-A01-9F3C"
 REPLACEMENT_STOP_ID = "ECH-01-C0001-L01-STOP-A02-ABCD"
+EMERGENCY_ID = "ECH-01-C0001-L01-EC-A01-ABCD"
 
 
 def instrument() -> InstrumentSpec:
@@ -186,7 +190,9 @@ def exchange_order(request: PlaceOrderRequest) -> ExchangeOrder:
         trigger_price=request.trigger_price,
         trigger_by=request.trigger_by,
         trigger_direction=request.trigger_direction,
-        time_in_force=request.time_in_force,
+        time_in_force=(
+            "IOC" if request.order_type == "Market" else request.time_in_force
+        ),
         position_idx=request.position_idx,
         close_on_trigger=request.close_on_trigger,
     )
@@ -310,6 +316,7 @@ def test_stop_uses_actual_entry_and_is_confirmed_before_protected(
             order_type="Market",
             quantity=Decimal("0.010"),
             order_link_id=STOP_ID,
+            time_in_force="IOC",
             reduce_only=True,
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
@@ -331,6 +338,62 @@ def test_stop_uses_actual_entry_and_is_confirmed_before_protected(
         assert snapshot.stop_order_id == "stop-exchange-order"
         assert snapshot.stop_trigger_price == Decimal("3004.5")
         return snapshot
+
+    run_service_test(tmp_path, exercise)
+
+
+def test_emergency_fill_closes_reconciling_protection_as_error(
+    tmp_path: Path,
+) -> None:
+    async def exercise(
+        store: SqliteExecutionStore,
+        trading: FakeTradingAdapter,
+        service: ProtectiveExitService,
+    ) -> object:
+        expected = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Buy",
+            order_type="Market",
+            quantity=Decimal("0.010"),
+            order_link_id=STOP_ID,
+            time_in_force="IOC",
+            reduce_only=True,
+            trigger_price=Decimal("3004.5"),
+            trigger_direction=1,
+            trigger_by="LastPrice",
+            close_on_trigger=True,
+            position_idx=0,
+        )
+        trading.visibility[STOP_ID] = [exchange_order(expected)]
+        protected = await service.install_stop(
+            ENTRY_ID,
+            instrument(),
+            STOP_ID,
+            stop_rate=Decimal("0.0015"),
+        )
+        closed = apply_emergency_exit_execution(
+            protected,
+            ExecutionUpdate(
+                execution_id="emergency-execution",
+                order_id="emergency-order",
+                order_link_id=EMERGENCY_ID,
+                symbol="ETHUSDT",
+                side="Buy",
+                price=Decimal("3010"),
+                quantity=Decimal("0.010"),
+                fee=Decimal("0.01"),
+                is_maker=False,
+                executed_at=NOW,
+            ),
+            updated_at=NOW,
+        )
+
+        assert closed.state is LiveExecutionState.ERROR
+        assert closed.open_quantity == Decimal("0")
+        assert closed.stop_filled_quantity == Decimal("0.010")
+        assert closed.confirmed_recovery_debt > Decimal("0")
+        return closed
 
     run_service_test(tmp_path, exercise)
 

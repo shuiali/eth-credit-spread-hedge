@@ -43,6 +43,7 @@ from eth_credit_hedge.domain.client_order_ids import (
 )
 from eth_credit_hedge.domain.execution import (
     AmendOrderRequest,
+    ExecutionUpdate,
     LiveExecutionState,
     PlaceOrderRequest,
     UncertainOrderOutcomeError,
@@ -60,6 +61,10 @@ from eth_credit_hedge.domain.option_lifecycle import (
     UnmatchedLongPolicy,
 )
 from eth_credit_hedge.domain.option_position import OptionPositionState
+from eth_credit_hedge.domain.protected_execution import (
+    ProtectionSnapshot,
+    apply_emergency_exit_execution,
+)
 from eth_credit_hedge.domain.reconciliation import ReconciliationReport
 from eth_credit_hedge.domain.risk import (
     RiskEngine,
@@ -162,6 +167,7 @@ async def run_d3_manual() -> DemoD3Result:
     store = SqliteExecutionStore(deployment.database_path)
     await store.initialize()
     await _synchronize_clock(private)
+    await _apply_recorded_emergency_exits(store, clock)
     await _reconcile_late_option_longs(
         store=store,
         private=private,
@@ -909,6 +915,7 @@ async def _make_perp_safe(
                     received_at=_clock_time(clock),
                     payload_hash=execution_payload_hash(execution),
                 )
+                await _apply_emergency_exit(store, execution, clock)
             if recorded_fill and await flatten.confirm_flattened():
                 break
             await asyncio.sleep(0.25)
@@ -940,6 +947,49 @@ async def _synchronize_clock(private: BybitPrivateRestClient) -> None:
     if last_error is None:
         raise AssertionError("clock synchronization loop did not run")
     raise last_error
+
+
+async def _apply_recorded_emergency_exits(
+    store: SqliteExecutionStore,
+    clock: ServerClock,
+) -> None:
+    for execution in await store.load_all_executions():
+        try:
+            role = ClientOrderId.parse(execution.order_link_id).role
+        except ValueError:
+            continue
+        if role is ClientOrderRole.EMERGENCY_CLOSE:
+            await _apply_emergency_exit(store, execution, clock)
+
+
+async def _apply_emergency_exit(
+    store: SqliteExecutionStore,
+    execution: ExecutionUpdate,
+    clock: ServerClock,
+) -> None:
+    close_id = ClientOrderId.parse(execution.order_link_id)
+    matches: list[ProtectionSnapshot] = []
+    for snapshot in await store.load_all_protection_snapshots():
+        entry_id = ClientOrderId.parse(snapshot.entry_order_link_id)
+        if (
+            entry_id.strategy_instance == close_id.strategy_instance
+            and entry_id.cycle == close_id.cycle
+            and entry_id.level == close_id.level
+        ):
+            matches.append(snapshot)
+    if not matches:
+        return
+    if len(matches) != 1:
+        raise RuntimeError("emergency execution matches multiple levels")
+    snapshot = matches[0]
+    if snapshot.open_quantity == ZERO:
+        return
+    updated = apply_emergency_exit_execution(
+        snapshot,
+        execution,
+        updated_at=_clock_time(clock),
+    )
+    await store.transition_protection_snapshot(snapshot.version, updated)
 
 
 async def _ensure_option_margin_mode(

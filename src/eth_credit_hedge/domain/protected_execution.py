@@ -364,6 +364,49 @@ def apply_exit_execution(
     )
 
 
+def apply_emergency_exit_execution(
+    snapshot: ProtectionSnapshot,
+    execution: ExecutionUpdate,
+    *,
+    updated_at: datetime,
+) -> ProtectionSnapshot:
+    entry_id = ClientOrderId.parse(snapshot.entry_order_link_id)
+    close_id = ClientOrderId.parse(execution.order_link_id)
+    if (
+        close_id.role is not ClientOrderRole.EMERGENCY_CLOSE
+        or close_id.strategy_instance != entry_id.strategy_instance
+        or close_id.cycle != entry_id.cycle
+        or close_id.level != entry_id.level
+    ):
+        raise ValueError("emergency execution does not belong to this level")
+    if execution.symbol != "ETHUSDT" or execution.side != "Buy":
+        raise ValueError("emergency execution must buy ETHUSDT")
+    if execution.quantity > snapshot.open_quantity:
+        raise ValueError("emergency execution exceeds confirmed open quantity")
+    allocated_entry_fee = (
+        snapshot.entry_fees * execution.quantity / snapshot.entry_quantity
+    )
+    debt = max(
+        (execution.price - snapshot.average_entry_price) * execution.quantity
+        + allocated_entry_fee
+        + execution.fee,
+        ZERO,
+    )
+    return replace(
+        snapshot,
+        state=LiveExecutionState.ERROR,
+        open_quantity=snapshot.open_quantity - execution.quantity,
+        stop_filled_quantity=snapshot.stop_filled_quantity + execution.quantity,
+        exit_notional=snapshot.exit_notional
+        + execution.price * execution.quantity,
+        exit_fees=snapshot.exit_fees + execution.fee,
+        confirmed_recovery_debt=snapshot.confirmed_recovery_debt + debt,
+        pending_terminal_state=None,
+        version=snapshot.version + 1,
+        updated_at=updated_at,
+    )
+
+
 def confirm_exit_reconciliation(
     snapshot: ProtectionSnapshot,
     *,

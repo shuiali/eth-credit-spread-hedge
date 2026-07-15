@@ -276,7 +276,7 @@ Each includes detection, automatic action, manual action, verification and revie
 - [x] Shadow mode is consistent.
 - [x] One-level demo lifecycle repeatedly passes.
 - [x] Restart/reconciliation passes.
-- [ ] Multiple levels pass demo.
+- [x] Multiple levels pass demo.
 - [ ] Recovery passes with actual fills.
 - [x] Kill switches pass.
 - [x] Alerts pass.

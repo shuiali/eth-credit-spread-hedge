@@ -298,7 +298,7 @@ database transaction rollback
 - [x] Unknown state suspends.
 - [x] Risk engine is independent.
 - [x] Finite limits exist.
-- [ ] Multiple baseline levels pass demo.
+- [x] Multiple baseline levels pass demo.
 - [x] Recovery uses confirmed actual debt.
 - [x] Rejected recovery is explicit.
 - [x] Locked-level action is tested.

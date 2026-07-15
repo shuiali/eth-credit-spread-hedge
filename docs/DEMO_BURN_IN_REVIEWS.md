@@ -92,8 +92,26 @@ Status: PASSED (2026-07-15, automated operator run).
 
 ## D5 Multiple baseline levels
 
-Status: NOT RUN. Record ordered crossings, aggregate position reconciliation,
-independent exits, no recovery escalation, operator, and review decision.
+Status: PASSED (2026-07-15, automated operator run).
+
+- Scope and limits: demo maximum aggregate quantity was explicitly capped at
+  0.20 ETH; the existing 500 USDT notional, 30% margin-use, 20% liquidation
+  distance and 2 USDT per-entry projected-stop limits remained unchanged.
+- Ordered crossings: distinct levels at 1870.46 and 1870.45 were armed above
+  market and crossed in level order by one normalized `LAST_TRADE` at 1870.44.
+- Actual entries: both persistence-first baseline requests filled 0.1 at
+  1870.44. No confirmed debt was added to either requested quantity; aggregate
+  exchange exposure reconciled exactly at 0.2 ETH.
+- Independent protection: each level received its own reduce-only TP and
+  reduce-only, close-on-trigger stop. Both stops were confirmed at 1879.80.
+- Restart: a fresh SQLite/private-state reconciliation passed `MATCHED` while
+  both levels and all four exits were live.
+- Independent exits: both controlled TP paths reached `CLOSED_TP`; actual
+  per-level P&L was -0.1452840 and -0.1102770 USDT. Each sibling stop was
+  reconciled independently and final aggregate position was flat with status
+  `MATCHED`.
+- Review decision: D5 passed. Baseline concurrency is enabled only within the
+  finite demo cap; recovery escalation and distributed recovery stayed off.
 
 ## D6 Full-next-TP recovery
 

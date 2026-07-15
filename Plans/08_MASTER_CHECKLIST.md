@@ -106,7 +106,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## Multiple levels and recovery
 
-- [ ] Multiple baseline levels on demo.
+- [x] Multiple baseline levels on demo.
 - [x] Concurrent exits.
 - [x] Shared boundaries.
 - [x] Local full-next-TP recovery.
@@ -156,7 +156,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Manual one-level demo passed.
 - [x] Automatic one-level demo passed.
 - [x] Restart demo passed.
-- [ ] Multiple levels passed.
+- [x] Multiple levels passed.
 - [ ] Recovery passed.
 - [ ] Mainnet shadow passed.
 - [ ] Finite limits approved.

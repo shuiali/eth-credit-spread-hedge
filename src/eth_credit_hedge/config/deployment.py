@@ -63,6 +63,7 @@ class EnvironmentProfile:
     required_execution_schema_version: int
     required_journal_schema_version: int
     maximum_clock_drift_ms: int
+    maximum_market_data_age_ms: int
     risk_limits: RiskLimits
 
     def __post_init__(self) -> None:
@@ -93,6 +94,7 @@ class EnvironmentProfile:
             "required_execution_schema_version",
             "required_journal_schema_version",
             "maximum_clock_drift_ms",
+            "maximum_market_data_age_ms",
         ):
             value = getattr(self, field_name)
             if type(value) is not int or value < 0:
@@ -202,6 +204,7 @@ def load_environment_profile(path: Path) -> EnvironmentProfile:
                 raw["required_journal_schema_version"]
             ),
             maximum_clock_drift_ms=int(raw["maximum_clock_drift_ms"]),
+            maximum_market_data_age_ms=int(raw["maximum_market_data_age_ms"]),
             risk_limits=limits,
         )
     except KeyError as exc:

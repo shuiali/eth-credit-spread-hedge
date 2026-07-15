@@ -8,6 +8,7 @@ external_order_mutations_enabled = false
 required_execution_schema_version = 3
 required_journal_schema_version = 1
 maximum_clock_drift_ms = 1000
+maximum_market_data_age_ms = 1000
 
 [risk_limits]
 maximum_perp_quantity = "1"

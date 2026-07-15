@@ -13,6 +13,7 @@
   decisions.
 - Health/status endpoints, structured secret-safe logs, Prometheus metrics,
   alerts, and durable kill switches.
+- Authenticated, audited, persistence-first idempotent operator commands.
 - Fail-closed shadow, release, pilot, and gradual-rollout acceptance evaluators.
 
 ### Changed

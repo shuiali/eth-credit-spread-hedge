@@ -31,6 +31,7 @@ def test_six_profiles_have_separate_databases_and_credential_scopes() -> None:
     assert len({profile.credential_key_env for profile in external}) == 4
     assert len({profile.credential_secret_env for profile in external}) == 4
     assert all(profile.risk_limits.maximum_perp_quantity.is_finite() for profile in profiles)
+    assert all(profile.maximum_market_data_age_ms > 0 for profile in profiles)
 
 
 def test_shadow_profile_is_mainnet_bound_but_cannot_mutate_orders() -> None:

@@ -522,7 +522,7 @@ class WalletState:
     account_type: str
     total_equity: Decimal
     total_wallet_balance: Decimal
-    total_available_balance: Decimal
+    total_available_balance: Decimal | None
     balances: tuple[WalletBalance, ...]
     updated_at: datetime
 
@@ -531,13 +531,20 @@ class WalletState:
         for field_name in (
             "total_equity",
             "total_wallet_balance",
-            "total_available_balance",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _decimal(getattr(self, field_name), field_name.replace("_", " ")),
             )
+        object.__setattr__(
+            self,
+            "total_available_balance",
+            _optional_decimal(
+                self.total_available_balance,
+                "total available balance",
+            ),
+        )
         balances = tuple(self.balances)
         coins = [balance.coin for balance in balances]
         if len(coins) != len(set(coins)):

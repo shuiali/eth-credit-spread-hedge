@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from decimal import Decimal
 from urllib.parse import urlsplit
 
@@ -395,7 +396,7 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
                             "avgPrice": "3000.2",
                             "markPrice": "2999.8",
                             "unrealisedPnl": "0.0016",
-                            "updatedTime": "1658385579420",
+                            "updatedTime": "",
                         }
                     ],
                     "nextPageCursor": "",
@@ -435,6 +436,34 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
     assert executions[0].quantity == Decimal("0.004")
     assert positions[0].side == "Sell"
     assert positions[0].quantity == Decimal("0.004")
+    assert positions[0].updated_at == datetime.fromtimestamp(
+        NOW_MS / 1000,
+        tz=timezone.utc,
+    )
     assert wallet.account_type == "UNIFIED"
     assert wallet.total_available_balance == Decimal("900.25")
     assert wallet.balances[0].coin == "USDT"
+
+
+def test_wallet_allows_unavailable_account_wide_balance() -> None:
+    requester = FakeRequester(
+        [
+            success_response(
+                {
+                    "list": [
+                        {
+                            "accountType": "UNIFIED",
+                            "totalEquity": "1000",
+                            "totalWalletBalance": "1000",
+                            "totalAvailableBalance": "",
+                            "coin": [],
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+
+    wallet = asyncio.run(client(requester).get_wallet_state())
+
+    assert wallet.total_available_balance is None

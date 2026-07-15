@@ -242,7 +242,7 @@ def test_position_and_wallet_models_handle_flat_positions_and_signed_pnl() -> No
         account_type="UNIFIED",
         total_equity=Decimal("1000"),
         total_wallet_balance=Decimal("1001.25"),
-        total_available_balance=Decimal("900"),
+        total_available_balance=None,
         balances=(balance,),
         updated_at=NOW,
     )
@@ -250,6 +250,7 @@ def test_position_and_wallet_models_handle_flat_positions_and_signed_pnl() -> No
     assert flat.side is None
     assert flat.average_price is None
     assert wallet.balances == (balance,)
+    assert wallet.total_available_balance is None
     assert wallet.balances[0].available_balance is None
 
     with pytest.raises(ValueError, match="non-flat position requires a side"):

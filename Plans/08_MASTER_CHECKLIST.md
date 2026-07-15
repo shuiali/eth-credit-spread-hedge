@@ -152,7 +152,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 ## Deployment gates
 
 - [x] Public data demo passed.
-- [ ] Read-only private passed.
+- [x] Read-only private passed.
 - [ ] Manual one-level demo passed.
 - [ ] Automatic one-level demo passed.
 - [ ] Restart demo passed.

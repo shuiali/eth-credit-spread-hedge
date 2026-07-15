@@ -23,8 +23,22 @@ Status: PASSED (2026-07-14, automated operator run).
 
 ## D2 Read-only private state
 
-Status: NOT RUN. Record orders/executions/positions/wallet reconciliation, clock
-drift, credential scope identifier, operator, and review decision.
+Status: PASSED (2026-07-15, automated operator run).
+
+- Credential scope: isolated `BYBIT_API_KEY_DEMO` / `BYBIT_API_SECRET_DEMO`
+  variables, sealed by the adapter to `https://api-demo.bybit.com` and
+  `wss://stream-demo.bybit.com/v5/private`.
+- Clock sample: +154 ms offset, 412 ms round trip and 206 ms uncertainty; all
+  remained inside the configured signed-request gates.
+- Signed REST snapshot: zero open orders, zero recent orders, zero executions,
+  one flat position row, zero nonzero positions and one UNIFIED wallet.
+- The demo account's isolated-margin response omitted account-wide available
+  balance. The parser records this as unavailable rather than zero, matching the
+  current Bybit V5 contract.
+- Exact empty-local-state reconciliation passed with zero differences.
+- Private WebSocket authentication passed; new entries remained blocked until
+  the authenticated connection generation was explicitly marked reconciled.
+- Review decision: D2 passed. No mutation was issued by this stage.
 
 ## D3 Manual one-level hedge
 

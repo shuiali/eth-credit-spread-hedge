@@ -277,7 +277,11 @@ class BybitPrivateRestClient:
         params = _category_symbol_params(normalized_category, symbol)
         responses = await self._get_all_pages("/v5/position/list", params)
         return tuple(
-            _parse_position(item, normalized_category)
+            _parse_position(
+                item,
+                normalized_category,
+                observed_at=_response_time(response),
+            )
             for response in responses
             for item in _result_items(response)
         )
@@ -529,6 +533,8 @@ def _parse_execution(item: JsonObject) -> ExecutionUpdate:
 def _parse_position(
     item: JsonObject,
     fallback_category: Category,
+    *,
+    observed_at: datetime,
 ) -> ExchangePosition:
     raw_side = _optional_text(item.get("side"))
     side = None if raw_side is None else _order_side(raw_side)
@@ -549,7 +555,11 @@ def _parse_position(
             "unrealisedPnl",
             default=Decimal("0"),
         ),
-        updated_at=_timestamp(item.get("updatedTime"), "updatedTime"),
+        updated_at=(
+            observed_at
+            if item.get("updatedTime") in (None, "")
+            else _timestamp(item.get("updatedTime"), "updatedTime")
+        ),
     )
 
 
@@ -591,7 +601,7 @@ def _parse_wallet(item: JsonObject, updated_at: datetime) -> WalletState:
             item.get("totalWalletBalance"),
             "totalWalletBalance",
         ),
-        total_available_balance=_decimal(
+        total_available_balance=_optional_decimal(
             item.get("totalAvailableBalance"),
             "totalAvailableBalance",
         ),

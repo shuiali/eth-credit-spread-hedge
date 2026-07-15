@@ -1060,7 +1060,14 @@ async def _await_d6_recovery_crossing(
                     await _synchronize_clock(private)
                     last_clock_sync = loop.time()
                 if _quotes_need_refresh(quote_timestamps, clock):
-                    quotes = await public.get_option_chain("ETH")
+                    try:
+                        quotes = await public.get_option_chain("ETH")
+                    except TimeoutError:
+                        previous_price = None
+                        connection_generation = None
+                        armed = False
+                        await asyncio.sleep(1)
+                        continue
                     quote_timestamps = _option_quote_timestamps(option, quotes)
                 trigger = router.from_trade(trade)
                 if trigger is None:

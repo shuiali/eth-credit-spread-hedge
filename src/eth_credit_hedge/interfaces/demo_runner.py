@@ -667,7 +667,7 @@ async def _run_recovery_perp_cycle(
         side="Sell",
         policy=PriceQuantizationPolicy.PASSIVE,
     )
-    tp_distance = max(Decimal("3.50"), tick * Decimal("350"))
+    tp_distance = max(Decimal("2.75"), tick * Decimal("275"))
     tp_price = entry_price - tp_distance
     if tp_price <= ZERO:
         raise DemoMutationRefusedError("D6 TP price is invalid")
@@ -739,6 +739,13 @@ async def _run_recovery_perp_cycle(
         baseline_tp_id,
         desired_price=level.tp_price,
     )
+    _d6_progress(
+        "BASELINE_PROTECTED",
+        cycle=cycle_number,
+        quantity=baseline_entry.filled_quantity,
+        stop=baseline_protection.stop_trigger_price,
+        tp=baseline_protection.tp_price,
+    )
     await _verify_liquidation_distance(
         private,
         deployment=deployment,
@@ -784,6 +791,12 @@ async def _run_recovery_perp_cycle(
         actual_stop_debt=baseline_closed.confirmed_recovery_debt,
         projected_debt=projected_debt,
     )
+    _d6_progress(
+        "BASELINE_STOPPED",
+        cycle=cycle_number,
+        stop_fill=baseline_stop_fill,
+        confirmed_debt=baseline_closed.confirmed_recovery_debt,
+    )
     global_debt, realized_loss = await _demo_loss_state(store)
     recovery_risk = replace(
         _demo_risk_state(
@@ -820,6 +833,11 @@ async def _run_recovery_perp_cycle(
         raise AssertionError("D6 finite-limit rejection did not lock the level")
     if rejected.debt_snapshot != debt_snapshot:
         raise AssertionError("rejected D6 recovery changed debt allocation")
+    _d6_progress(
+        "REJECTION_LOCKED",
+        cycle=cycle_number,
+        action=rejected.plan.locked_action.value,
+    )
 
     crossing = await _await_d6_recovery_crossing(
         public=public,
@@ -828,6 +846,12 @@ async def _run_recovery_perp_cycle(
         option=option,
         quote_timestamps=quote_timestamps,
         entry_price=level.entry_price,
+    )
+    _d6_progress(
+        "RECOVERY_CROSSED",
+        cycle=cycle_number,
+        price=crossing.price,
+        observed_at=crossing.timestamp_utc,
     )
     recovery_entry_id = _d6_order_id(
         cycle_number,
@@ -869,6 +893,13 @@ async def _run_recovery_perp_cycle(
         take_profit_order_link_id=recovery_tp_id,
         stop_rate=Decimal("0.005"),
         take_profit_price=level.tp_price,
+    )
+    _d6_progress(
+        "RECOVERY_PROTECTED",
+        cycle=cycle_number,
+        quantity=recovery_opened.entry.filled_quantity,
+        stop=recovery_opened.protection.stop_trigger_price,
+        tp=recovery_opened.protection.tp_price,
     )
     await _verify_liquidation_distance(
         private,
@@ -922,6 +953,11 @@ async def _run_recovery_perp_cycle(
         raise DemoMutationRefusedError("D6 recovery stopped before its TP")
     if recovery_closed.state is not LiveExecutionState.CLOSED_TP:
         raise DemoMutationRefusedError("D6 recovery did not reach a TP state")
+    _d6_progress(
+        "RECOVERY_TP_FILLED",
+        cycle=cycle_number,
+        realized_pnl=recovery_closed.realized_pnl,
+    )
 
     net_zone_budget = max(
         level.option_budget
@@ -1090,6 +1126,20 @@ def _d6_order_id(
             role,
             attempt,
         )
+    )
+
+
+def _d6_progress(event: str, **fields: object) -> None:
+    print(
+        json.dumps(
+            {"event": event, **fields},
+            default=lambda value: (
+                value.isoformat() if isinstance(value, datetime) else str(value)
+            ),
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        flush=True,
     )
 
 

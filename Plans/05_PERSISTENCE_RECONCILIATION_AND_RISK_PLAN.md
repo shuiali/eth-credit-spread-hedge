@@ -292,13 +292,13 @@ database transaction rollback
 
 ## Acceptance gate
 
-- [ ] Restart reconstructs state.
-- [ ] Executions store idempotently.
-- [ ] Reconciliation precedes resumed trading.
-- [ ] Unknown state suspends.
-- [ ] Risk engine is independent.
-- [ ] Finite limits exist.
+- [x] Restart reconstructs state.
+- [x] Executions store idempotently.
+- [x] Reconciliation precedes resumed trading.
+- [x] Unknown state suspends.
+- [x] Risk engine is independent.
+- [x] Finite limits exist.
 - [ ] Multiple baseline levels pass demo.
-- [ ] Recovery uses confirmed actual debt.
-- [ ] Rejected recovery is explicit.
-- [ ] Locked-level action is tested.
+- [x] Recovery uses confirmed actual debt.
+- [x] Rejected recovery is explicit.
+- [x] Locked-level action is tested.

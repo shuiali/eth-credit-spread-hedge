@@ -5,8 +5,21 @@ separately scoped demo environment. A code or simulator test is not demo evidenc
 
 ## D1 Public data
 
-Status: NOT RUN. Record window, disconnects, reconnects, stale durations, capture
-hash, operator, and review decision.
+Status: PASSED (2026-07-14, automated operator run).
+
+- Live public smoke: option chain, ETHUSDT instrument/order book, trade stream,
+  and a synchronized 20-event order-book stream passed.
+- Burn-in window: 60 seconds with ETHUSDT trades, ticker, depth-50 order book,
+  and selected option `ETH-15JUL26-1775-P-USDT` ticker.
+- Capture: 31,479 normalized records; all four streams produced data and every
+  source hash had 64 hexadecimal characters.
+- Counts: 2,918 trades, 506 perpetual tickers, 100 book snapshots, 27,878 book
+  deltas, and 77 option tickers.
+- Local reconnect evidence: disconnect/reconnect resubscription increments the
+  connection generation and requires a new book snapshot before deltas apply.
+- Ignored local evidence SHA-256:
+  `7444218a3d325aea7f541a12e883e2967a86047e641aa9934b0c1ec2f106b57f`.
+- Review decision: D1 passed. This provides no private or order authority.
 
 ## D2 Read-only private state
 

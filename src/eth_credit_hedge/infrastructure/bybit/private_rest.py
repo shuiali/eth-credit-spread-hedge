@@ -44,6 +44,11 @@ from eth_credit_hedge.infrastructure.bybit.error_mapping import (
 
 JsonObject = dict[str, object]
 PrivateRequester = Callable[["PreparedBybitRequest"], JsonObject]
+MarginMode = Literal[
+    "ISOLATED_MARGIN",
+    "REGULAR_MARGIN",
+    "PORTFOLIO_MARGIN",
+]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -298,6 +303,19 @@ class BybitPrivateRestClient:
             raise ValueError("Bybit wallet response must contain exactly one account")
         return _parse_wallet(accounts[0], _response_time(response))
 
+    async def get_margin_mode(self) -> MarginMode:
+        response = await self._get("/v5/account/info", {})
+        return _margin_mode(_result_object(response).get("marginMode"))
+
+    async def set_margin_mode(self, margin_mode: MarginMode) -> None:
+        normalized = _margin_mode(margin_mode)
+        await self._mutate(
+            "/v5/account/set-margin-mode",
+            {"setMarginMode": normalized},
+            operation="set account margin mode",
+            order_link_id=None,
+        )
+
     async def _get_all_pages(
         self,
         endpoint: str,
@@ -408,7 +426,6 @@ def _validate_response(response: JsonObject) -> JsonObject:
         raise ValueError("Bybit response retMsg must be a string")
     raise_for_bybit_error(raw_code, raw_message)
     _result_object(response)
-    _response_time(response)
     return response
 
 
@@ -429,6 +446,16 @@ def _result_items(response: JsonObject) -> list[JsonObject]:
             raise ValueError("Bybit response item must be an object")
         items.append(cast(JsonObject, raw_item))
     return items
+
+
+def _margin_mode(value: object) -> MarginMode:
+    if value not in (
+        "ISOLATED_MARGIN",
+        "REGULAR_MARGIN",
+        "PORTFOLIO_MARGIN",
+    ):
+        raise ValueError("Bybit margin mode is invalid")
+    return value
 
 
 def _response_time(response: JsonObject) -> datetime:

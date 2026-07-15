@@ -175,6 +175,32 @@ def test_place_order_signs_the_exact_transmitted_body_once() -> None:
     assert sent.headers["X-BAPI-SIGN"] not in repr(sent)
 
 
+def test_account_margin_mode_can_be_read_and_changed() -> None:
+    isolated = success_response({"marginMode": "ISOLATED_MARGIN"})
+    changed = success_response({"reasons": []})
+    regular = success_response({"marginMode": "REGULAR_MARGIN"})
+    isolated.pop("time")
+    changed.pop("time")
+    regular.pop("time")
+    requester = FakeRequester(
+        [isolated, changed, regular]
+    )
+    rest = client(requester)
+
+    before = asyncio.run(rest.get_margin_mode())
+    asyncio.run(rest.set_margin_mode("REGULAR_MARGIN"))
+    after = asyncio.run(rest.get_margin_mode())
+
+    assert before == "ISOLATED_MARGIN"
+    assert after == "REGULAR_MARGIN"
+    assert requester.requests[0].url.endswith("/v5/account/info")
+    assert requester.requests[1].url.endswith("/v5/account/set-margin-mode")
+    assert requester.requests[1].body is not None
+    assert json.loads(requester.requests[1].body) == {
+        "setMarginMode": "REGULAR_MARGIN"
+    }
+
+
 def test_conditional_close_sends_the_exchange_safety_flag() -> None:
     requester = FakeRequester(
         [

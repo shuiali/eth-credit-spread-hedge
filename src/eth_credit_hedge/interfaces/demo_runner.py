@@ -170,6 +170,7 @@ async def run_d3_manual() -> DemoD3Result:
     )
     _require_matched(initial_report, "initial demo reconciliation")
     _require_one_way_account(initial_exchange)
+    await _ensure_option_margin_mode(private)
 
     try:
         option = await _open_or_load_option_spread(
@@ -225,9 +226,18 @@ async def _open_or_load_option_spread(
     if len(opened) == 1:
         return opened[0]
     if snapshots:
-        raise DemoMutationRefusedError(
-            "durable option state exists but is not exactly one OPEN spread"
+        safely_rejected = all(
+            snapshot.state is OptionPositionState.ERROR
+            and snapshot.long_order_id is None
+            and snapshot.short_order_id is None
+            and snapshot.long_filled_quantity == ZERO
+            and snapshot.short_filled_quantity == ZERO
+            for snapshot in snapshots
         )
+        if not safely_rejected:
+            raise DemoMutationRefusedError(
+                "durable option state exists but is not exactly one OPEN spread"
+            )
 
     quotes, instruments = await asyncio.gather(
         public.get_option_chain("ETH"),
@@ -390,6 +400,7 @@ async def _run_protected_perp_cycle(
     await _verify_liquidation_distance(
         private,
         deployment=deployment,
+        instrument=instrument,
     )
 
     await _synchronize_clock(private)
@@ -821,10 +832,30 @@ async def _synchronize_clock(private: BybitPrivateRestClient) -> None:
     raise last_error
 
 
+async def _ensure_option_margin_mode(
+    private: BybitPrivateRestClient,
+) -> None:
+    current = await private.get_margin_mode()
+    if current in ("REGULAR_MARGIN", "PORTFOLIO_MARGIN"):
+        return
+    try:
+        await private.set_margin_mode("REGULAR_MARGIN")
+    except UncertainOrderOutcomeError:
+        pass
+    for _ in range(20):
+        if await private.get_margin_mode() == "REGULAR_MARGIN":
+            return
+        await asyncio.sleep(0.25)
+    raise DemoMutationRefusedError(
+        "demo account did not enter cross margin mode for option trading"
+    )
+
+
 async def _verify_liquidation_distance(
     private: BybitPrivateRestClient,
     *,
     deployment: EnvironmentProfile,
+    instrument: InstrumentSpec,
 ) -> None:
     positions = tuple(
         position
@@ -836,12 +867,19 @@ async def _verify_liquidation_distance(
             "expected exactly one protected ETHUSDT short position"
         )
     position = positions[0]
-    if position.mark_price is None or position.liquidation_price is None:
+    if position.mark_price is None:
         raise DemoMutationRefusedError(
-            "Bybit did not provide mark and liquidation prices"
+            "Bybit did not provide a mark price"
+        )
+    liquidation_boundary = position.liquidation_price
+    if liquidation_boundary is None:
+        liquidation_boundary = instrument.price_filter.max_price
+    if liquidation_boundary is None or liquidation_boundary <= position.mark_price:
+        raise DemoMutationRefusedError(
+            "Bybit did not provide a usable short liquidation boundary"
         )
     distance = (
-        position.liquidation_price - position.mark_price
+        liquidation_boundary - position.mark_price
     ) / position.mark_price
     if distance < deployment.risk_limits.minimum_liquidation_distance:
         raise DemoMutationRefusedError(

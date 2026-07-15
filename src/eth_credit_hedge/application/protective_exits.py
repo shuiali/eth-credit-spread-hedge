@@ -101,6 +101,7 @@ class ProtectiveExitService:
             trigger_direction=1,
             trigger_by="LastPrice",
             position_idx=0,
+            close_on_trigger=True,
         )
         snapshot = ProtectionSnapshot.for_stop_intent(
             entry,
@@ -214,6 +215,7 @@ class ProtectiveExitService:
             trigger_direction=1,
             trigger_by="LastPrice",
             position_idx=0,
+            close_on_trigger=True,
         )
         with_intent = replace_stop_intent(
             snapshot,
@@ -407,6 +409,7 @@ class ProtectiveExitService:
             or order.trigger_direction != request.trigger_direction
             or order.time_in_force != request.time_in_force
             or order.position_idx != request.position_idx
+            or order.close_on_trigger != request.close_on_trigger
             or not order.reduce_only
             or order.status not in {"New", "Untriggered", "PartiallyFilled"}
         ):

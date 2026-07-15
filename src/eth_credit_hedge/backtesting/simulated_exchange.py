@@ -915,6 +915,7 @@ class SimulatedExchange:
             trigger_direction=request.trigger_direction,
             time_in_force=request.time_in_force,
             position_idx=request.position_idx,
+            close_on_trigger=request.close_on_trigger,
         )
 
     def _visible(self, order: _SimulatedOrder) -> bool:

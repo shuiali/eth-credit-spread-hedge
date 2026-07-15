@@ -175,6 +175,37 @@ def test_place_order_signs_the_exact_transmitted_body_once() -> None:
     assert sent.headers["X-BAPI-SIGN"] not in repr(sent)
 
 
+def test_conditional_close_sends_the_exchange_safety_flag() -> None:
+    requester = FakeRequester(
+        [
+            success_response(
+                {
+                    "orderId": "stop-1",
+                    "orderLinkId": "ECH-01-C0001-L01-STOP-A01-9F3C",
+                }
+            )
+        ]
+    )
+    request = PlaceOrderRequest(
+        category="linear",
+        symbol="ETHUSDT",
+        side="Buy",
+        order_type="Market",
+        quantity=Decimal("0.010"),
+        order_link_id="ECH-01-C0001-L01-STOP-A01-9F3C",
+        reduce_only=True,
+        trigger_price=Decimal("3010"),
+        trigger_direction=1,
+        trigger_by="LastPrice",
+        close_on_trigger=True,
+    )
+
+    asyncio.run(client(requester).place_order(request))
+
+    assert requester.requests[0].body is not None
+    assert json.loads(requester.requests[0].body)["closeOnTrigger"] is True
+
+
 def test_mutating_timeout_is_uncertain_and_is_not_retried() -> None:
     requester = FakeRequester([TimeoutError("response timed out")])
     rest = client(requester)
@@ -397,6 +428,7 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
                             "markPrice": "2999.8",
                             "unrealisedPnl": "0.0016",
                             "updatedTime": "",
+                            "positionIdx": 0,
                         }
                     ],
                     "nextPageCursor": "",
@@ -436,6 +468,7 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
     assert executions[0].quantity == Decimal("0.004")
     assert positions[0].side == "Sell"
     assert positions[0].quantity == Decimal("0.004")
+    assert positions[0].position_idx == 0
     assert positions[0].updated_at == datetime.fromtimestamp(
         NOW_MS / 1000,
         tz=timezone.utc,

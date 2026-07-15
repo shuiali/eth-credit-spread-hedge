@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from eth_credit_hedge.domain.execution import (
+    ExecutionUpdate,
     OrderRequestAck,
     OrderRequestKind,
     PlaceOrderRequest,
@@ -88,3 +89,29 @@ class EmergencyFlattenService:
     async def confirm_flattened(self) -> bool:
         positions = await self._account.get_positions("linear", "ETHUSDT")
         return not any(position.quantity > 0 for position in positions)
+
+    async def record_fill(
+        self,
+        execution: ExecutionUpdate,
+        *,
+        received_at: datetime,
+        payload_hash: str,
+    ) -> bool:
+        request = await self._store.load_order_intent(execution.order_link_id)
+        if (
+            request is None
+            or request.symbol != "ETHUSDT"
+            or request.side != "Buy"
+            or request.order_type != "Market"
+            or not request.reduce_only
+            or execution.order_id == ""
+            or execution.symbol != "ETHUSDT"
+            or execution.side != "Buy"
+            or execution.quantity > request.quantity
+        ):
+            raise ValueError("execution is not a persisted emergency close fill")
+        return await self._store.record_execution(
+            execution,
+            received_at,
+            payload_hash,
+        )

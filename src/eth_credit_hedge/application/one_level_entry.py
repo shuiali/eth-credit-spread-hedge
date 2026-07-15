@@ -18,6 +18,7 @@ from eth_credit_hedge.domain.live_execution import (
     EntryExecutionSnapshot,
     apply_entry_execution,
     entry_position_matches,
+    finalize_partial_entry,
     transition_entry_snapshot,
 )
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
@@ -172,6 +173,15 @@ class OneLevelEntryService:
                 reconciling,
             )
         return False
+
+    async def finalize_partial_fill(
+        self,
+        order_link_id: str,
+    ) -> EntryExecutionSnapshot:
+        snapshot = await self._required_snapshot(order_link_id)
+        finalized = finalize_partial_entry(snapshot, updated_at=self._clock())
+        await self._store.transition_entry_snapshot(snapshot.version, finalized)
+        return finalized
 
     async def _required_snapshot(
         self,

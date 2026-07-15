@@ -131,6 +131,8 @@ class BybitPrivateRestClient:
             payload["triggerPrice"] = _decimal_text(request.trigger_price)
             payload["triggerDirection"] = request.trigger_direction
             payload["triggerBy"] = request.trigger_by
+        if request.close_on_trigger:
+            payload["closeOnTrigger"] = True
         response = await self._mutate(
             "/v5/order/create",
             payload,
@@ -509,6 +511,11 @@ def _parse_exchange_order(
             _optional_text(item.get("timeInForce")),
         ),
         position_idx=_optional_integer(item.get("positionIdx"), "positionIdx"),
+        close_on_trigger=(
+            False
+            if item.get("closeOnTrigger") is None
+            else _bool(item.get("closeOnTrigger"), "closeOnTrigger")
+        ),
     )
 
 
@@ -559,6 +566,9 @@ def _parse_position(
             observed_at
             if item.get("updatedTime") in (None, "")
             else _timestamp(item.get("updatedTime"), "updatedTime")
+        ),
+        position_idx=(
+            _optional_integer(item.get("positionIdx"), "positionIdx") or 0
         ),
     )
 

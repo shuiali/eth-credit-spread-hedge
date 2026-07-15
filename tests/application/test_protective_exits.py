@@ -188,6 +188,7 @@ def exchange_order(request: PlaceOrderRequest) -> ExchangeOrder:
         trigger_direction=request.trigger_direction,
         time_in_force=request.time_in_force,
         position_idx=request.position_idx,
+        close_on_trigger=request.close_on_trigger,
     )
 
 
@@ -313,6 +314,7 @@ def test_stop_uses_actual_entry_and_is_confirmed_before_protected(
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
             position_idx=0,
         )
         trading.visibility[STOP_ID] = [None, exchange_order(expected)]
@@ -393,6 +395,7 @@ def test_uncertain_stop_that_exists_is_confirmed_without_retry(tmp_path: Path) -
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         trading.uncertain_order_link_ids.add(STOP_ID)
         trading.visibility[STOP_ID] = [exchange_order(expected)]
@@ -428,6 +431,7 @@ def test_tp_is_reduce_only_for_confirmed_open_quantity(tmp_path: Path) -> None:
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         trading.visibility[STOP_ID] = [exchange_order(stop_request)]
         protected = await service.install_stop(
@@ -483,6 +487,7 @@ def test_partial_tp_then_stop_is_idempotent_and_uses_actual_debt(
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         tp_request = PlaceOrderRequest(
             category="linear",
@@ -579,6 +584,7 @@ def test_cancel_fill_race_closes_only_after_orders_and_position_reconcile(
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         tp_request = PlaceOrderRequest(
             category="linear",
@@ -660,6 +666,7 @@ def test_position_mismatch_after_exit_suspends_in_reconciling(tmp_path: Path) ->
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         trading.visibility[STOP_ID] = [exchange_order(stop_request)]
         await service.install_stop(
@@ -711,6 +718,7 @@ def test_missing_stop_is_replaced_with_new_attempt_and_survives_restart(
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         tp_request = PlaceOrderRequest(
             category="linear",
@@ -744,6 +752,7 @@ def test_missing_stop_is_replaced_with_new_attempt_and_survives_restart(
             trigger_price=Decimal("3004.5"),
             trigger_direction=1,
             trigger_by="LastPrice",
+            close_on_trigger=True,
         )
         trading.visibility[REPLACEMENT_STOP_ID] = [exchange_order(replacement)]
 

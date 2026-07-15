@@ -139,6 +139,7 @@ class PlaceOrderRequest:
     trigger_direction: int | None = None
     trigger_by: TriggerBy | None = None
     position_idx: int = 0
+    close_on_trigger: bool = False
 
     def __post_init__(self) -> None:
         _category(self.category)
@@ -161,6 +162,8 @@ class PlaceOrderRequest:
             raise ValueError("unsupported time in force")
         if type(self.reduce_only) is not bool:
             raise ValueError("reduce only must be boolean")
+        if type(self.close_on_trigger) is not bool:
+            raise ValueError("close on trigger must be boolean")
         if trigger_price is None:
             if self.trigger_direction is not None or self.trigger_by is not None:
                 raise ValueError("trigger fields require a trigger price")
@@ -171,6 +174,10 @@ class PlaceOrderRequest:
                 raise ValueError("trigger direction is required and must be 1 or 2")
             if self.trigger_by not in ("LastPrice", "IndexPrice", "MarkPrice"):
                 raise ValueError("trigger source is required")
+        if self.close_on_trigger and (not self.reduce_only or trigger_price is None):
+            raise ValueError(
+                "close on trigger requires a reduce-only conditional order"
+            )
         if type(self.position_idx) is not int or self.position_idx not in (0, 1, 2):
             raise ValueError("position index must be 0, 1, or 2")
         object.__setattr__(self, "quantity", quantity)
@@ -262,6 +269,7 @@ class ExchangeOrder:
     trigger_direction: int | None = None
     time_in_force: TimeInForce | None = None
     position_idx: int | None = None
+    close_on_trigger: bool = False
 
     def __post_init__(self) -> None:
         _category(self.category)
@@ -311,6 +319,8 @@ class ExchangeOrder:
             raise ValueError("position index must be 0, 1, or 2")
         if type(self.reduce_only) is not bool:
             raise ValueError("reduce only must be boolean")
+        if type(self.close_on_trigger) is not bool:
+            raise ValueError("close on trigger must be boolean")
         created_at = _utc(self.created_at, "order creation time")
         updated_at = _utc(self.updated_at, "order update time")
         if updated_at < created_at:
@@ -464,6 +474,7 @@ class ExchangePosition:
     mark_price: Decimal | None
     unrealized_pnl: Decimal
     updated_at: datetime
+    position_idx: int = 0
 
     def __post_init__(self) -> None:
         _category(self.category)
@@ -483,6 +494,8 @@ class ExchangePosition:
             raise ValueError("average price must be positive")
         if mark_price is not None and mark_price <= ZERO:
             raise ValueError("mark price must be positive")
+        if type(self.position_idx) is not int or self.position_idx not in (0, 1, 2):
+            raise ValueError("position index must be 0, 1, or 2")
         object.__setattr__(self, "quantity", quantity)
         object.__setattr__(self, "average_price", average_price)
         object.__setattr__(self, "mark_price", mark_price)

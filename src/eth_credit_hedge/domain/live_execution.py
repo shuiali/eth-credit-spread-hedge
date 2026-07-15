@@ -187,6 +187,22 @@ def apply_entry_execution(
     )
 
 
+def finalize_partial_entry(
+    snapshot: EntryExecutionSnapshot,
+    *,
+    updated_at: datetime,
+) -> EntryExecutionSnapshot:
+    """Accept the execution-proven remainder after a terminal partial order."""
+    if snapshot.state is not LiveExecutionState.ENTRY_PARTIALLY_FILLED:
+        raise ValueError("partial finalization requires ENTRY_PARTIALLY_FILLED")
+    return replace(
+        snapshot,
+        state=LiveExecutionState.ACTIVE_UNPROTECTED,
+        version=snapshot.version + 1,
+        updated_at=updated_at,
+    )
+
+
 def entry_position_matches(
     snapshot: EntryExecutionSnapshot,
     positions: tuple[ExchangePosition, ...],

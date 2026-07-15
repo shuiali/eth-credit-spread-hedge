@@ -72,6 +72,13 @@ class ExecutionPersistencePort(Protocol):
         snapshot: EntryExecutionSnapshot,
     ) -> bool: ...
 
+    async def record_execution(
+        self,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+    ) -> bool: ...
+
     async def persist_protection_intent(
         self,
         request: PlaceOrderRequest,

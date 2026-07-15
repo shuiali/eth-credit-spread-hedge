@@ -528,6 +528,7 @@ def _order_matches_intent(
         and order.trigger_direction == request.trigger_direction
         and order.time_in_force == request.time_in_force
         and order.position_idx == request.position_idx
+        and order.close_on_trigger == request.close_on_trigger
     )
 
 

@@ -96,6 +96,7 @@ def parse_position_message(
                 "unrealized P&L",
             ),
             updated_at=_item_time(item, received_at),
+            position_idx=_optional_position_idx(item.get("positionIdx")),
         )
         for item in _message_items(message)
     )
@@ -182,6 +183,15 @@ def _int(value: object, field_name: str) -> int:
         return int(cast(str | int, value))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Bybit {field_name} must be an integer") from exc
+
+
+def _optional_position_idx(value: object) -> int:
+    if value in (None, ""):
+        return 0
+    position_idx = _int(value, "positionIdx")
+    if position_idx not in (0, 1, 2):
+        raise ValueError("Bybit positionIdx must be 0, 1, or 2")
+    return position_idx
 
 
 def _required_text(parent: dict[str, Any], key: str) -> str:

@@ -225,6 +225,22 @@ class SqliteExecutionStore:
             snapshot,
         )
 
+    async def record_execution(
+        self,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+    ) -> bool:
+        received = _utc(received_at, "execution receive time")
+        if _SHA256_PATTERN.fullmatch(payload_hash) is None:
+            raise ValueError("payload hash must be a SHA-256 hexadecimal digest")
+        return await asyncio.to_thread(
+            self._record_execution,
+            execution,
+            received,
+            payload_hash.lower(),
+        )
+
     async def persist_protection_intent(
         self,
         request: PlaceOrderRequest,
@@ -562,6 +578,20 @@ class SqliteExecutionStore:
                 return False
             _update_snapshot(connection, previous_version, snapshot)
             return True
+
+    def _record_execution(
+        self,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+    ) -> bool:
+        with self._connect() as connection:
+            return _insert_execution_if_new(
+                connection,
+                execution,
+                received_at,
+                payload_hash,
+            )
 
     def _persist_protection_intent(
         self,
@@ -1075,6 +1105,7 @@ def _serialize_request(request: PlaceOrderRequest) -> str:
             "trigger_direction": request.trigger_direction,
             "trigger_by": request.trigger_by,
             "position_idx": request.position_idx,
+            "close_on_trigger": request.close_on_trigger,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -1106,6 +1137,10 @@ def _deserialize_request(payload: str) -> PlaceOrderRequest:
             _optional_string(data.get("trigger_by")),
         ),
         position_idx=_required_int(data, "position_idx"),
+        close_on_trigger=_bool_value(
+            data.get("close_on_trigger", False),
+            "close_on_trigger",
+        ),
     )
 
 
@@ -1130,7 +1165,10 @@ def _optional_decimal_value(value: object) -> Decimal | None:
 
 
 def _required_bool(data: dict[str, Any], key: str) -> bool:
-    value = data.get(key)
+    return _bool_value(data.get(key), key)
+
+
+def _bool_value(value: object, key: str) -> bool:
     if type(value) is not bool:
         raise ValueError(f"persisted {key} must be a boolean")
     return value

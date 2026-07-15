@@ -13,6 +13,7 @@ from eth_credit_hedge.application.emergency_flatten import EmergencyFlattenServi
 from eth_credit_hedge.domain.execution import (
     ExchangeOrder,
     ExchangePosition,
+    ExecutionUpdate,
     OrderRequestAck,
     OrderRequestKind,
     PlaceOrderRequest,
@@ -151,6 +152,34 @@ def test_flatten_persists_exact_reduce_only_intent_and_confirms_position_zero(
     )
     assert not result.position_confirmed_flat
     assert asyncio.run(service.confirm_flattened())
+
+    execution = ExecutionUpdate(
+        execution_id="flatten-execution-1",
+        order_id=result.acknowledgement.order_id,
+        order_link_id=ORDER_LINK_ID,
+        symbol="ETHUSDT",
+        side="Buy",
+        price=Decimal("2999"),
+        quantity=Decimal("0.010"),
+        fee=Decimal("0.01"),
+        is_maker=False,
+        executed_at=NOW,
+    )
+    assert asyncio.run(
+        service.record_fill(
+            execution,
+            received_at=NOW,
+            payload_hash="f" * 64,
+        )
+    )
+    assert not asyncio.run(
+        service.record_fill(
+            execution,
+            received_at=NOW,
+            payload_hash="f" * 64,
+        )
+    )
+    assert asyncio.run(store.execution_count()) == 1
 
 
 def test_flatten_ack_does_not_claim_position_is_flat(tmp_path: Path) -> None:

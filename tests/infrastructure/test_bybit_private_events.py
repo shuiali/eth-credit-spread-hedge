@@ -116,6 +116,7 @@ def position_message() -> dict[str, Any]:
                 "markPrice": "3000.20",
                 "unrealisedPnl": "",
                 "updatedTime": str(NOW_MS - 3),
+                "positionIdx": 2,
             }
         ],
     }
@@ -174,6 +175,7 @@ def test_position_parser_treats_empty_exchange_decimals_as_missing_or_zero() -> 
     assert position.average_price is None
     assert position.mark_price == Decimal("3000.20")
     assert position.unrealized_pnl == Decimal("0")
+    assert position.position_idx == 2
 
 
 class FakeSocket:

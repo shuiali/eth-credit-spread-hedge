@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable
+from contextlib import aclosing
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from eth_credit_hedge.application.shadow_mode import (
     ShadowIntent,
@@ -69,28 +70,36 @@ class ShadowRunner:
             raise ValueError("shadow intent target must be positive")
         intents: list[ShadowIntent] = []
         observation_count = 0
-        async for trade in self._market_data.stream_trades("ETHUSDT"):
-            trigger = self._router.from_trade(trade)
-            if trigger is None:
-                raise AssertionError("LAST_TRADE router must accept normalized trades")
-            observation = ShadowObservation(
-                event=trigger,
-                market_health=self._health_provider(trade),
-                risk_state=self._risk_state_provider(trade),
-            )
-            self._observation_recorder.append(observation)
-            result = self._shadow.on_trigger(
-                observation.event,
-                observation.market_health,
-                observation.risk_state,
-            )
-            intents.extend(result.intents)
-            observation_count += 1
-            if observation_count >= maximum_events or (
-                stop_after_intents is not None
-                and len(intents) >= stop_after_intents
-            ):
-                break
+        stream = self._market_data.stream_trades("ETHUSDT")
+        if not hasattr(stream, "aclose"):
+            raise TypeError("shadow trade stream must support asynchronous close")
+        async with aclosing(
+            cast(AsyncGenerator[TradeEvent, None], stream)
+        ) as trades:
+            async for trade in trades:
+                trigger = self._router.from_trade(trade)
+                if trigger is None:
+                    raise AssertionError(
+                        "LAST_TRADE router must accept normalized trades"
+                    )
+                observation = ShadowObservation(
+                    event=trigger,
+                    market_health=self._health_provider(trade),
+                    risk_state=self._risk_state_provider(trade),
+                )
+                self._observation_recorder.append(observation)
+                result = self._shadow.on_trigger(
+                    observation.event,
+                    observation.market_health,
+                    observation.risk_state,
+                )
+                intents.extend(result.intents)
+                observation_count += 1
+                if observation_count >= maximum_events or (
+                    stop_after_intents is not None
+                    and len(intents) >= stop_after_intents
+                ):
+                    break
         return ShadowRunResult(
             observation_count=observation_count,
             intents=tuple(intents),

@@ -499,6 +499,10 @@ def _parse_exchange_order(
     fallback_category: Category,
 ) -> ExchangeOrder:
     category = _category(_optional_text(item.get("category")) or fallback_category)
+    trigger_price = _optional_positive_decimal(
+        item.get("triggerPrice"),
+        "triggerPrice",
+    )
     return ExchangeOrder(
         category=category,
         order_id=_required_text(item, "orderId"),
@@ -521,17 +525,19 @@ def _parse_exchange_order(
         reduce_only=_bool(item.get("reduceOnly"), "reduceOnly"),
         created_at=_timestamp(item.get("createdTime"), "createdTime"),
         updated_at=_timestamp(item.get("updatedTime"), "updatedTime"),
-        trigger_price=_optional_positive_decimal(
-            item.get("triggerPrice"),
-            "triggerPrice",
+        trigger_price=trigger_price,
+        trigger_by=(
+            None
+            if trigger_price is None
+            else cast(TriggerBy | None, _optional_text(item.get("triggerBy")))
         ),
-        trigger_by=cast(
-            TriggerBy | None,
-            _optional_text(item.get("triggerBy")),
-        ),
-        trigger_direction=_optional_integer(
-            item.get("triggerDirection"),
-            "triggerDirection",
+        trigger_direction=(
+            None
+            if trigger_price is None
+            else _optional_integer(
+                item.get("triggerDirection"),
+                "triggerDirection",
+            )
         ),
         time_in_force=cast(
             TimeInForce | None,

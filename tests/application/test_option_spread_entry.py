@@ -21,6 +21,11 @@ from eth_credit_hedge.domain.execution import (
     OrderRequestKind,
     PlaceOrderRequest,
 )
+from eth_credit_hedge.domain.live_option_execution import (
+    OptionSpreadExecutionSnapshot,
+    acknowledge_option_order,
+    mark_option_execution_error,
+)
 from eth_credit_hedge.domain.option_lifecycle import (
     OptionEntryPolicy,
     UnmatchedLongPolicy,
@@ -199,3 +204,83 @@ def test_short_rejection_retains_only_the_confirmed_protective_long(
     assert snapshot.short_filled_quantity == Decimal("0")
     assert not snapshot.has_naked_short
     assert [request.side for request in exchange.requests] == ["Buy", "Sell"]
+
+
+def test_restart_imports_a_late_long_fill_before_submitting_short(
+    tmp_path: Path,
+) -> None:
+    service, exchange, store = make_service(tmp_path / "restart.sqlite3")
+    entry_plan = plan()
+    long_request = PlaceOrderRequest(
+        category="option",
+        symbol=entry_plan.long_symbol,
+        side="Buy",
+        order_type="Limit",
+        quantity=entry_plan.quantity,
+        order_link_id=entry_plan.long_order_link_id,
+        price=entry_plan.long_limit_price,
+        time_in_force="IOC",
+        position_idx=0,
+    )
+    pending = OptionSpreadExecutionSnapshot.for_long_intent(
+        long_request,
+        cycle_id=entry_plan.cycle_id,
+        short_symbol=entry_plan.short_symbol,
+        expiry_time_utc=entry_plan.expiry_time_utc,
+        expected_net_credit=entry_plan.expected_net_credit,
+        persisted_at=NOW,
+    )
+    asyncio.run(store.persist_option_long_intent(long_request, pending, NOW))
+    acknowledgement = OrderRequestAck(
+        request_kind=OrderRequestKind.PLACE,
+        order_id="order-1",
+        order_link_id=LONG_ID,
+        acknowledged_at=NOW,
+    )
+    acknowledged = acknowledge_option_order(
+        pending,
+        acknowledgement,
+        updated_at=NOW,
+    )
+    asyncio.run(
+        store.record_option_acknowledgement_and_snapshot(
+            pending.version,
+            acknowledgement,
+            acknowledged,
+        )
+    )
+    errored = mark_option_execution_error(acknowledged, updated_at=NOW)
+    asyncio.run(
+        store.transition_option_spread_snapshot(
+            acknowledged.version,
+            errored,
+        )
+    )
+    exchange.requests.append(long_request)
+    exchange.executions[LONG_ID] = ExecutionUpdate(
+        execution_id="execution-1",
+        order_id="order-1",
+        order_link_id=LONG_ID,
+        symbol=LONG_SYMBOL,
+        side="Buy",
+        price=Decimal("18.9"),
+        quantity=Decimal("0.1"),
+        fee=Decimal("0.01"),
+        is_maker=False,
+        executed_at=NOW,
+    )
+
+    protected = asyncio.run(service.reconcile_protective_long(errored, policy()))
+    opened = asyncio.run(
+        service.complete_from_protective_long(
+            protected,
+            short_limit_price=entry_plan.short_limit_price,
+            short_order_link_id=SHORT_ID,
+            policy=policy(),
+        )
+    )
+
+    assert protected.state is OptionPositionState.LONG_PROTECTION_FILLED
+    assert opened.state is OptionPositionState.OPEN
+    assert [request.side for request in exchange.requests] == ["Buy", "Sell"]
+    assert asyncio.run(store.execution_count()) == 2

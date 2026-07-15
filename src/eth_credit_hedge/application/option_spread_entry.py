@@ -139,14 +139,65 @@ class OptionSpreadEntryService:
         if snapshot.state is not OptionPositionState.LONG_PROTECTION_FILLED:
             raise OptionSpreadNotOpenedError("protective long did not fully fill")
 
+        return await self.complete_from_protective_long(
+            snapshot,
+            short_limit_price=plan.short_limit_price,
+            short_order_link_id=plan.short_order_link_id,
+            policy=policy,
+        )
+
+    async def reconcile_protective_long(
+        self,
+        snapshot: OptionSpreadExecutionSnapshot,
+        policy: OptionEntryPolicy,
+    ) -> OptionSpreadExecutionSnapshot:
+        if (
+            snapshot.short_order_link_id is not None
+            or snapshot.short_order_id is not None
+            or snapshot.short_filled_quantity != 0
+        ):
+            raise OptionSpreadNotOpenedError(
+                "cannot reconcile a protective long after the short started"
+            )
+        request = await self._store.load_order_intent(
+            snapshot.long_order_link_id
+        )
+        if request is None:
+            raise OptionSpreadNotOpenedError(
+                "protective long has no durable order intent"
+            )
+        try:
+            reconciled = await self._await_leg(snapshot, request, policy)
+        except Exception as exc:
+            await self._mark_error(snapshot)
+            raise OptionSpreadNotOpenedError(str(exc)) from exc
+        if reconciled.state is not OptionPositionState.LONG_PROTECTION_FILLED:
+            raise OptionSpreadNotOpenedError(
+                "protective long did not fully fill during reconciliation"
+            )
+        return reconciled
+
+    async def complete_from_protective_long(
+        self,
+        snapshot: OptionSpreadExecutionSnapshot,
+        *,
+        short_limit_price: Decimal,
+        short_order_link_id: str,
+        policy: OptionEntryPolicy,
+    ) -> OptionSpreadExecutionSnapshot:
+        if snapshot.state is not OptionPositionState.LONG_PROTECTION_FILLED:
+            raise OptionSpreadNotOpenedError(
+                "short premium requires a reconciled protective long"
+            )
+
         short_request = PlaceOrderRequest(
             category="option",
-            symbol=plan.short_symbol,
+            symbol=snapshot.short_symbol,
             side="Sell",
             order_type="Limit",
             quantity=snapshot.long_filled_quantity,
-            order_link_id=plan.short_order_link_id,
-            price=plan.short_limit_price,
+            order_link_id=short_order_link_id,
+            price=short_limit_price,
             time_in_force="IOC",
             position_idx=0,
         )

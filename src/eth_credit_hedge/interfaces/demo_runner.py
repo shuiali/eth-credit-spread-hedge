@@ -19,6 +19,7 @@ from eth_credit_hedge.application.one_level_lifecycle import (
 from eth_credit_hedge.application.option_spread_entry import (
     OptionSpreadEntryPlan,
     OptionSpreadEntryService,
+    OptionSpreadNotOpenedError,
 )
 from eth_credit_hedge.application.protective_exits import ProtectiveExitService
 from eth_credit_hedge.application.read_only_reconciliation import (
@@ -161,6 +162,11 @@ async def run_d3_manual() -> DemoD3Result:
     store = SqliteExecutionStore(deployment.database_path)
     await store.initialize()
     await _synchronize_clock(private)
+    await _reconcile_late_option_longs(
+        store=store,
+        private=private,
+        clock=clock,
+    )
     cycle_number = _next_cycle_number(await store.load_all_order_intents())
     initial_report, initial_exchange = await _reconcile(
         store,
@@ -225,6 +231,67 @@ async def _open_or_load_option_spread(
     )
     if len(opened) == 1:
         return opened[0]
+    protected = tuple(
+        snapshot
+        for snapshot in snapshots
+        if snapshot.state is OptionPositionState.LONG_PROTECTION_FILLED
+    )
+    if len(protected) > 1:
+        raise DemoMutationRefusedError(
+            "multiple unmatched protective option longs exist"
+        )
+
+    quotes, instruments = await asyncio.gather(
+        public.get_option_chain("ETH"),
+        public.list_instruments("option", base_coin="ETH"),
+    )
+    if len(protected) == 1:
+        snapshot = protected[0]
+        by_quote = {quote.symbol: quote for quote in quotes}
+        by_instrument = {
+            instrument.symbol: instrument for instrument in instruments
+        }
+        short_quote = by_quote.get(snapshot.short_symbol)
+        short_instrument = by_instrument.get(snapshot.short_symbol)
+        if (
+            short_quote is None
+            or short_instrument is None
+            or not _eligible_short(
+                short_quote,
+                short_instrument,
+                _clock_time(clock),
+            )
+            or short_quote.bid_price is None
+        ):
+            raise DemoMutationRefusedError(
+                "reconciled protective long has no executable short quote"
+            )
+        original_cycle = ClientOrderId.parse(
+            snapshot.long_order_link_id
+        ).cycle
+        service = _option_entry_service(store, private, clock)
+        return await service.complete_from_protective_long(
+            snapshot,
+            short_limit_price=quantize_limit_price(
+                short_quote.bid_price,
+                short_instrument.price_filter.tick_size,
+                side="Sell",
+                policy=PriceQuantizationPolicy.AGGRESSIVE,
+            ),
+            short_order_link_id=str(
+                ClientOrderId.new(
+                    STRATEGY_INSTANCE,
+                    original_cycle,
+                    0,
+                    ClientOrderRole.OPTION_SHORT,
+                    1,
+                )
+            ),
+            policy=_option_entry_policy(
+                snapshot.requested_quantity,
+                snapshot.expected_net_credit,
+            ),
+        )
     if snapshots:
         safely_rejected = all(
             snapshot.state is OptionPositionState.ERROR
@@ -238,11 +305,6 @@ async def _open_or_load_option_spread(
             raise DemoMutationRefusedError(
                 "durable option state exists but is not exactly one OPEN spread"
             )
-
-    quotes, instruments = await asyncio.gather(
-        public.get_option_chain("ETH"),
-        public.list_instruments("option", base_coin="ETH"),
-    )
     long_quote, short_quote, long_instrument, short_instrument = (
         select_demo_option_pair(
             quotes,
@@ -303,22 +365,70 @@ async def _open_or_load_option_spread(
             )
         ),
     )
-    policy = OptionEntryPolicy(
-        max_leg_wait_seconds=Decimal("15"),
-        allow_partial_spread=False,
-        minimum_matched_quantity=quantity,
-        maximum_credit_deviation=max(Decimal("1"), expected_credit / 2),
-        unmatched_long_policy=UnmatchedLongPolicy.RETAIN,
-    )
+    policy = _option_entry_policy(quantity, expected_credit)
     await _synchronize_clock(private)
-    service = OptionSpreadEntryService(
+    service = _option_entry_service(store, private, clock)
+    return await service.open_spread(plan, policy)
+
+
+async def _reconcile_late_option_longs(
+    *,
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    clock: ServerClock,
+) -> None:
+    service = _option_entry_service(store, private, clock)
+    for snapshot in await store.load_all_option_spread_snapshots():
+        if not (
+            snapshot.state is OptionPositionState.ERROR
+            and snapshot.long_order_id is not None
+            and snapshot.short_order_link_id is None
+            and snapshot.short_order_id is None
+            and snapshot.short_filled_quantity == ZERO
+        ):
+            continue
+        try:
+            await service.reconcile_protective_long(
+                snapshot,
+                _option_entry_policy(
+                    snapshot.requested_quantity,
+                    snapshot.expected_net_credit,
+                ),
+            )
+        except OptionSpreadNotOpenedError:
+            refreshed = await store.load_option_spread_snapshot(snapshot.cycle_id)
+            if refreshed is not None and refreshed.long_filled_quantity > ZERO:
+                raise
+
+
+def _option_entry_service(
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    clock: ServerClock,
+) -> OptionSpreadEntryService:
+    return OptionSpreadEntryService(
         trading=private,
         store=store,
         clock=lambda: _clock_time(clock),
         fill_attempts=50,
         fill_interval_seconds=0.25,
     )
-    return await service.open_spread(plan, policy)
+
+
+def _option_entry_policy(
+    quantity: Decimal,
+    expected_net_credit: Decimal,
+) -> OptionEntryPolicy:
+    return OptionEntryPolicy(
+        max_leg_wait_seconds=Decimal("15"),
+        allow_partial_spread=False,
+        minimum_matched_quantity=quantity,
+        maximum_credit_deviation=max(
+            Decimal("1"),
+            expected_net_credit / 2,
+        ),
+        unmatched_long_policy=UnmatchedLongPolicy.RETAIN,
+    )
 
 
 async def _run_protected_perp_cycle(

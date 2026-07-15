@@ -117,6 +117,9 @@ def order_item(
         "cumExecQty": "0.002",
         "avgPrice": "3000.0",
         "reduceOnly": False,
+        "triggerPrice": "",
+        "triggerBy": "",
+        "triggerDirection": 0,
         "createdTime": "1658385579000",
         "updatedTime": "1658385579423",
     }

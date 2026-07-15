@@ -55,9 +55,18 @@ class ShadowRunner:
         self._observation_recorder = observation_recorder
         self._router = TriggerPriceRouter(TriggerPriceSource.LAST_TRADE)
 
-    async def run(self, *, maximum_events: int) -> ShadowRunResult:
+    async def run(
+        self,
+        *,
+        maximum_events: int,
+        stop_after_intents: int | None = None,
+    ) -> ShadowRunResult:
         if type(maximum_events) is not int or maximum_events <= 0:
             raise ValueError("maximum shadow events must be positive")
+        if stop_after_intents is not None and (
+            type(stop_after_intents) is not int or stop_after_intents <= 0
+        ):
+            raise ValueError("shadow intent target must be positive")
         intents: list[ShadowIntent] = []
         observation_count = 0
         async for trade in self._market_data.stream_trades("ETHUSDT"):
@@ -77,7 +86,10 @@ class ShadowRunner:
             )
             intents.extend(result.intents)
             observation_count += 1
-            if observation_count >= maximum_events:
+            if observation_count >= maximum_events or (
+                stop_after_intents is not None
+                and len(intents) >= stop_after_intents
+            ):
                 break
         return ShadowRunResult(
             observation_count=observation_count,

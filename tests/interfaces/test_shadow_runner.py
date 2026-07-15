@@ -136,3 +136,26 @@ def test_shadow_runner_capture_replays_to_identical_intent_digest(tmp_path) -> N
     assert len(live.intents) == 1
     assert replayed == live.intents
     assert digest_shadow_intents(replayed) == live.decision_digest
+
+
+def test_shadow_runner_can_stop_after_first_recorded_intent(tmp_path) -> None:
+    runner = ShadowRunner(
+        market_data=TradeStream(),  # type: ignore[arg-type]
+        shadow=service(),
+        health_provider=lambda event: MarketDataHealthResult(
+            trading_allowed=True,
+            reasons=(),
+            event_type=MarketDataEventType.MARKET_DATA_RECOVERED,
+        ),
+        risk_state_provider=lambda event: state(),
+        observation_recorder=JsonLinesShadowObservationRecorder(
+            tmp_path / "observations.jsonl"
+        ),
+    )
+
+    result = asyncio.run(
+        runner.run(maximum_events=100, stop_after_intents=1)
+    )
+
+    assert result.observation_count == 2
+    assert len(result.intents) == 1

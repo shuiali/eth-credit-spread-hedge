@@ -57,20 +57,20 @@ Check an item only when implementation, tests and acceptance criteria pass.
 ## One-level demo
 
 - [ ] Trigger.
-- [ ] Persist intent.
-- [ ] Entry submission.
-- [ ] Confirm actual fill.
-- [ ] Aggregate partial fills.
-- [ ] Reconcile position.
-- [ ] Create stop.
-- [ ] Confirm stop.
-- [ ] Create TP.
-- [ ] Confirm TP.
-- [ ] Process TP.
+- [x] Persist intent.
+- [x] Entry submission.
+- [x] Confirm actual fill.
+- [x] Aggregate partial fills.
+- [x] Reconcile position.
+- [x] Create stop.
+- [x] Confirm stop.
+- [x] Create TP.
+- [x] Confirm TP.
+- [x] Process TP.
 - [ ] Process stop.
-- [ ] Reconcile sibling exit.
+- [x] Reconcile sibling exit.
 - [ ] Actual P&L and debt.
-- [ ] Restart recovery.
+- [x] Restart recovery.
 
 ## Persistence and reconciliation
 
@@ -153,9 +153,9 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 - [x] Public data demo passed.
 - [x] Read-only private passed.
-- [ ] Manual one-level demo passed.
+- [x] Manual one-level demo passed.
 - [ ] Automatic one-level demo passed.
-- [ ] Restart demo passed.
+- [x] Restart demo passed.
 - [ ] Multiple levels passed.
 - [ ] Recovery passed.
 - [ ] Mainnet shadow passed.

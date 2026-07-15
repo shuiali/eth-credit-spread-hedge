@@ -308,13 +308,13 @@ BybitDemoAdapter
 ## Acceptance gate
 
 - [ ] One virtual level triggers on demo.
-- [ ] Client order IDs are persisted before submission.
-- [ ] Executions determine actual quantity.
-- [ ] Position receives exchange-hosted protection.
-- [ ] TP and stop are reduce-only.
-- [ ] Duplicate executions are idempotent.
-- [ ] Partial fills aggregate correctly.
-- [ ] Cancel/fill races reconcile.
-- [ ] Local and exchange positions agree.
-- [ ] Restart discovers and protects an active position.
-- [ ] Multiple levels and recovery remain disabled.
+- [x] Client order IDs are persisted before submission.
+- [x] Executions determine actual quantity.
+- [x] Position receives exchange-hosted protection.
+- [x] TP and stop are reduce-only.
+- [x] Duplicate executions are idempotent.
+- [x] Partial fills aggregate correctly.
+- [x] Cancel/fill races reconcile.
+- [x] Local and exchange positions agree.
+- [x] Restart discovers and protects an active position.
+- [x] Multiple levels and recovery remain disabled.

@@ -42,8 +42,31 @@ Status: PASSED (2026-07-15, automated operator run).
 
 ## D3 Manual one-level hedge
 
-Status: NOT RUN. Record persisted intent, fill, protection, exit, actual P&L,
-restart evidence, operator, and review decision.
+Status: PASSED (2026-07-15, automated operator run).
+
+- Account precondition: the isolated demo account was moved through Bybit's
+  account-level API to `REGULAR_MARGIN`, which is required for option trading.
+- Option execution: protective long `ETH-31JUL26-1750-P-USDT` filled first at
+  27.6; short `ETH-31JUL26-1800-P-USDT` then filled at 42.8. Matched quantity
+  was 0.1, total option fees were 0.11242587 USDT and execution-derived net
+  credit was 1.40757413 USDT.
+- Restart recovery: a process failure after the long acknowledgement was
+  recovered from exchange execution history. The late fill was imported
+  idempotently before the short leg was allowed.
+- Protected cycle: `D3-C0004` sold 0.1 ETHUSDT at an actual average of 1867.72.
+  The exchange confirmed a reduce-only, close-on-trigger stop at 1877.06 and a
+  reduce-only TP with original price 1858.37.
+- Protected restart: a new SQLite store and a fresh private snapshot reconciled
+  `MATCHED` while the position and both exits were live.
+- Controlled exit: the TP was amended marketable and filled 0.1 at 1867.55.
+  Entry plus exit fees produced actual realized P&L of -0.1230756 USDT; the
+  sibling stop finished `Deactivated`, the linear position was flat and final
+  reconciliation was `MATCHED`.
+- Fail-closed evidence: an earlier stop-visibility schema mismatch triggered an
+  execution-recorded emergency flatten. Its -0.17456965 USDT result and debt
+  remain in the durable audit history; no failed run was counted as a pass.
+- Review decision: D3 passed. Automatic crossing, multiple levels and recovery
+  escalation remained disabled.
 
 ## D4 Automatic one-level hedge
 

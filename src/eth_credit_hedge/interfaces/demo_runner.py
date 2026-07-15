@@ -1054,7 +1054,7 @@ async def _await_d6_recovery_crossing(
     await _synchronize_clock(private)
     last_clock_sync = loop.time()
     try:
-        async with asyncio.timeout(1_800):
+        async with asyncio.timeout(7_200):
             async for trade in trade_stream:
                 if loop.time() - last_clock_sync >= 30:
                     await _synchronize_clock(private)
@@ -1096,7 +1096,7 @@ async def _await_d6_recovery_crossing(
                     return trade
     except TimeoutError as exc:
         raise DemoMutationRefusedError(
-            "no fresh same-level recovery crossing arrived within 30 minutes"
+            "no fresh same-level recovery crossing arrived within 2 hours"
         ) from exc
     finally:
         await trade_stream.aclose()

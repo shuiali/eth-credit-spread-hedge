@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
 from eth_credit_hedge.application.one_level_entry import OneLevelEntryService
+from eth_credit_hedge.application.execution_hash import execution_payload_hash
 from eth_credit_hedge.application.protective_exits import ProtectiveExitService
 from eth_credit_hedge.domain.execution import (
     LiveExecutionState,
@@ -169,7 +168,7 @@ class OneLevelLifecycleService:
                 snapshot = await self._exits.apply_exit_execution(
                     execution,
                     received_at=self._clock(),
-                    payload_hash=_execution_payload_hash(execution),
+                    payload_hash=execution_payload_hash(execution),
                 )
             if snapshot.state is LiveExecutionState.CANCEL_PENDING:
                 snapshot = await self._exits.reconcile_after_exit(
@@ -203,7 +202,7 @@ class OneLevelLifecycleService:
                 snapshot = await self._entry.apply_execution(
                     execution,
                     received_at=self._clock(),
-                    payload_hash=_execution_payload_hash(execution),
+                    payload_hash=execution_payload_hash(execution),
                 )
             if snapshot.state is LiveExecutionState.ACTIVE_UNPROTECTED:
                 return snapshot
@@ -241,20 +240,3 @@ class OneLevelLifecycleService:
         if snapshot is None:
             raise ValueError("protection snapshot does not exist")
         return snapshot
-
-
-def _execution_payload_hash(execution: object) -> str:
-    payload = {
-        "executed_at": getattr(execution, "executed_at").isoformat(),
-        "execution_id": getattr(execution, "execution_id"),
-        "fee": str(getattr(execution, "fee")),
-        "is_maker": getattr(execution, "is_maker"),
-        "order_id": getattr(execution, "order_id"),
-        "order_link_id": getattr(execution, "order_link_id"),
-        "price": str(getattr(execution, "price")),
-        "quantity": str(getattr(execution, "quantity")),
-        "side": getattr(execution, "side"),
-        "symbol": getattr(execution, "symbol"),
-    }
-    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    return hashlib.sha256(encoded).hexdigest()

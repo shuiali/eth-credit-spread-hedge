@@ -91,6 +91,10 @@ def parse_position_message(
             quantity=_required_decimal(item, "size"),
             average_price=_optional_decimal(item.get("entryPrice"), "entry price"),
             mark_price=_optional_decimal(item.get("markPrice"), "mark price"),
+            liquidation_price=_optional_positive_decimal(
+                item.get("liqPrice"),
+                "liquidation price",
+            ),
             unrealized_pnl=_decimal_or_zero(
                 item.get("unrealisedPnl"),
                 "unrealized P&L",
@@ -232,6 +236,16 @@ def _optional_decimal(value: object, field_name: str) -> Decimal | None:
         raise ValueError(f"Bybit {field_name} must be a finite decimal") from exc
     if not parsed.is_finite():
         raise ValueError(f"Bybit {field_name} must be a finite decimal")
+    return parsed
+
+
+def _optional_positive_decimal(
+    value: object,
+    field_name: str,
+) -> Decimal | None:
+    parsed = _optional_decimal(value, field_name)
+    if parsed == Decimal("0"):
+        return None
     return parsed
 
 

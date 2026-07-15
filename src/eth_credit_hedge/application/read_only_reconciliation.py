@@ -131,8 +131,11 @@ class BybitPrivateStateReader:
         option_history_task = asyncio.create_task(
             self.trading.get_order_history("option")
         )
-        execution_task = asyncio.create_task(
+        linear_execution_task = asyncio.create_task(
             self.trading.get_execution_history("linear", "ETHUSDT")
+        )
+        option_execution_task = asyncio.create_task(
+            self.trading.get_execution_history("option")
         )
         linear_position_task = asyncio.create_task(
             self.account.get_positions("linear", "ETHUSDT")
@@ -146,7 +149,8 @@ class BybitPrivateStateReader:
             option_open_task,
             linear_history_task,
             option_history_task,
-            execution_task,
+            linear_execution_task,
+            option_execution_task,
             linear_position_task,
             option_position_task,
             wallet_task,
@@ -168,7 +172,10 @@ class BybitPrivateStateReader:
                 *linear_history_task.result(),
                 *option_history_task.result(),
             ),
-            executions=execution_task.result(),
+            executions=(
+                *linear_execution_task.result(),
+                *option_execution_task.result(),
+            ),
             positions=(
                 *linear_position_task.result(),
                 *option_position_task.result(),

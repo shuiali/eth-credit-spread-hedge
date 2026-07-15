@@ -426,6 +426,7 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
                             "size": "0.004",
                             "avgPrice": "3000.2",
                             "markPrice": "2999.8",
+                            "liqPrice": "3500.5",
                             "unrealisedPnl": "0.0016",
                             "updatedTime": "",
                             "positionIdx": 0,
@@ -469,6 +470,7 @@ def test_read_only_account_and_execution_responses_are_normalized() -> None:
     assert positions[0].side == "Sell"
     assert positions[0].quantity == Decimal("0.004")
     assert positions[0].position_idx == 0
+    assert positions[0].liquidation_price == Decimal("3500.5")
     assert positions[0].updated_at == datetime.fromtimestamp(
         NOW_MS / 1000,
         tz=timezone.utc,

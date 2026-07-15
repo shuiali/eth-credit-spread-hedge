@@ -557,6 +557,10 @@ def _parse_position(
             "avgPrice",
         ),
         mark_price=_optional_positive_decimal(item.get("markPrice"), "markPrice"),
+        liquidation_price=_optional_positive_decimal(
+            item.get("liqPrice"),
+            "liqPrice",
+        ),
         unrealized_pnl=_decimal(
             item.get("unrealisedPnl"),
             "unrealisedPnl",

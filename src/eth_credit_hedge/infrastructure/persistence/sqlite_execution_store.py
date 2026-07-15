@@ -23,6 +23,10 @@ from eth_credit_hedge.domain.execution import (
     TriggerBy,
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
+from eth_credit_hedge.domain.live_option_execution import (
+    OptionSpreadExecutionSnapshot,
+)
+from eth_credit_hedge.domain.option_position import OptionPositionState
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 from eth_credit_hedge.domain.live_recovery import (
     RecoveryDebtSnapshot,
@@ -95,6 +99,29 @@ CREATE TABLE IF NOT EXISTS protection_snapshots (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS option_spread_snapshots (
+    cycle_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    long_symbol TEXT NOT NULL,
+    short_symbol TEXT NOT NULL,
+    expiry_time_utc TEXT NOT NULL,
+    requested_quantity TEXT NOT NULL,
+    expected_net_credit TEXT NOT NULL,
+    long_order_link_id TEXT NOT NULL UNIQUE REFERENCES order_intents(order_link_id),
+    short_order_link_id TEXT UNIQUE REFERENCES order_intents(order_link_id),
+    long_order_id TEXT,
+    short_order_id TEXT,
+    long_filled_quantity TEXT NOT NULL,
+    short_filled_quantity TEXT NOT NULL,
+    long_notional TEXT NOT NULL,
+    short_notional TEXT NOT NULL,
+    long_fees TEXT NOT NULL,
+    short_fees TEXT NOT NULL,
+    opened_time_utc TEXT,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS recovery_debts (
     level_id INTEGER PRIMARY KEY,
     projected_debt TEXT NOT NULL,
@@ -113,6 +140,9 @@ VALUES (2, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (4, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (5, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -126,6 +156,91 @@ class SqliteExecutionStore:
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
+
+    async def persist_option_long_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        persisted = _utc(persisted_at, "option intent persistence time")
+        await asyncio.to_thread(
+            self._persist_option_long_intent,
+            request,
+            snapshot,
+            persisted,
+        )
+
+    async def persist_option_short_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        persisted = _utc(persisted_at, "option intent persistence time")
+        await asyncio.to_thread(
+            self._persist_option_short_intent,
+            previous_version,
+            request,
+            snapshot,
+            persisted,
+        )
+
+    async def load_option_spread_snapshot(
+        self,
+        cycle_id: str,
+    ) -> OptionSpreadExecutionSnapshot | None:
+        return await asyncio.to_thread(self._load_option_spread_snapshot, cycle_id)
+
+    async def load_all_option_spread_snapshots(
+        self,
+    ) -> tuple[OptionSpreadExecutionSnapshot, ...]:
+        return await asyncio.to_thread(self._load_all_option_spread_snapshots)
+
+    async def transition_option_spread_snapshot(
+        self,
+        previous_version: int,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None:
+        await asyncio.to_thread(
+            self._transition_option_spread_snapshot,
+            previous_version,
+            snapshot,
+        )
+
+    async def record_option_acknowledgement_and_snapshot(
+        self,
+        previous_version: int,
+        acknowledgement: OrderRequestAck,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None:
+        await asyncio.to_thread(
+            self._record_option_acknowledgement_and_snapshot,
+            previous_version,
+            acknowledgement,
+            snapshot,
+        )
+
+    async def record_option_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> bool:
+        received = _utc(received_at, "option execution receive time")
+        if _SHA256_PATTERN.fullmatch(payload_hash) is None:
+            raise ValueError("payload hash must be a SHA-256 hexadecimal digest")
+        return await asyncio.to_thread(
+            self._record_option_execution_and_snapshot,
+            previous_version,
+            execution,
+            received,
+            payload_hash.lower(),
+            snapshot,
+        )
 
     async def persist_order_intent(
         self,
@@ -383,6 +498,121 @@ class SqliteExecutionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_MIGRATION)
+
+    def _persist_option_long_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                _insert_order_intent(connection, request, persisted_at)
+                connection.execute(
+                    """
+                    INSERT INTO option_spread_snapshots(
+                        cycle_id, state, long_symbol, short_symbol,
+                        expiry_time_utc, requested_quantity,
+                        expected_net_credit, long_order_link_id,
+                        short_order_link_id, long_order_id, short_order_id,
+                        long_filled_quantity, short_filled_quantity,
+                        long_notional, short_notional, long_fees, short_fees,
+                        opened_time_utc, version, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    _option_spread_values(snapshot),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("option long intent is already persisted") from exc
+
+    def _persist_option_short_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                _insert_order_intent(connection, request, persisted_at)
+                _update_option_spread_snapshot(
+                    connection,
+                    previous_version,
+                    snapshot,
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("option short intent is already persisted") from exc
+
+    def _load_option_spread_snapshot(
+        self,
+        cycle_id: str,
+    ) -> OptionSpreadExecutionSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM option_spread_snapshots WHERE cycle_id = ?",
+                (cycle_id,),
+            ).fetchone()
+        return None if row is None else _option_spread_from_row(row)
+
+    def _load_all_option_spread_snapshots(
+        self,
+    ) -> tuple[OptionSpreadExecutionSnapshot, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM option_spread_snapshots ORDER BY cycle_id"
+            ).fetchall()
+        return tuple(_option_spread_from_row(row) for row in rows)
+
+    def _transition_option_spread_snapshot(
+        self,
+        previous_version: int,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None:
+        with self._connect() as connection:
+            _update_option_spread_snapshot(connection, previous_version, snapshot)
+
+    def _record_option_acknowledgement_and_snapshot(
+        self,
+        previous_version: int,
+        acknowledgement: OrderRequestAck,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE order_intents
+                SET exchange_order_id = ?, acknowledged_at = ?
+                WHERE order_link_id = ?
+                """,
+                (
+                    acknowledgement.order_id,
+                    acknowledgement.acknowledged_at.isoformat(),
+                    acknowledgement.order_link_id,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ValueError("option acknowledgement has no persisted intent")
+            _update_option_spread_snapshot(connection, previous_version, snapshot)
+
+    def _record_option_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> bool:
+        with self._connect() as connection:
+            inserted = _insert_execution_if_new(
+                connection,
+                execution,
+                received_at,
+                payload_hash,
+            )
+            if not inserted:
+                return False
+            _update_option_spread_snapshot(connection, previous_version, snapshot)
+            return True
 
     def _persist_order_intent(
         self,
@@ -943,6 +1173,101 @@ def _update_protection_snapshot(
         raise ConcurrentSnapshotUpdateError(
             "protection snapshot version changed before transaction commit"
         )
+
+
+def _option_spread_values(
+    snapshot: OptionSpreadExecutionSnapshot,
+) -> tuple[object, ...]:
+    return (
+        snapshot.cycle_id,
+        snapshot.state.value,
+        snapshot.long_symbol,
+        snapshot.short_symbol,
+        snapshot.expiry_time_utc.isoformat(),
+        str(snapshot.requested_quantity),
+        str(snapshot.expected_net_credit),
+        snapshot.long_order_link_id,
+        snapshot.short_order_link_id,
+        snapshot.long_order_id,
+        snapshot.short_order_id,
+        str(snapshot.long_filled_quantity),
+        str(snapshot.short_filled_quantity),
+        str(snapshot.long_notional),
+        str(snapshot.short_notional),
+        str(snapshot.long_fees),
+        str(snapshot.short_fees),
+        (
+            None
+            if snapshot.opened_time_utc is None
+            else snapshot.opened_time_utc.isoformat()
+        ),
+        snapshot.version,
+        snapshot.updated_at.isoformat(),
+    )
+
+
+def _update_option_spread_snapshot(
+    connection: sqlite3.Connection,
+    previous_version: int,
+    snapshot: OptionSpreadExecutionSnapshot,
+) -> None:
+    if snapshot.version != previous_version + 1:
+        raise ValueError("new option snapshot version must increment exactly once")
+    values = _option_spread_values(snapshot)
+    updated = connection.execute(
+        """
+        UPDATE option_spread_snapshots
+        SET state = ?, long_symbol = ?, short_symbol = ?,
+            expiry_time_utc = ?, requested_quantity = ?,
+            expected_net_credit = ?, long_order_link_id = ?,
+            short_order_link_id = ?, long_order_id = ?, short_order_id = ?,
+            long_filled_quantity = ?, short_filled_quantity = ?,
+            long_notional = ?, short_notional = ?, long_fees = ?,
+            short_fees = ?, opened_time_utc = ?, version = ?, updated_at = ?
+        WHERE cycle_id = ? AND version = ?
+        """,
+        (*values[1:], snapshot.cycle_id, previous_version),
+    ).rowcount
+    if updated != 1:
+        raise ConcurrentSnapshotUpdateError(
+            "option snapshot version changed before transaction commit"
+        )
+
+
+def _option_spread_from_row(row: sqlite3.Row) -> OptionSpreadExecutionSnapshot:
+    opened = row["opened_time_utc"]
+    return OptionSpreadExecutionSnapshot(
+        cycle_id=str(row["cycle_id"]),
+        state=OptionPositionState(str(row["state"])),
+        long_symbol=str(row["long_symbol"]),
+        short_symbol=str(row["short_symbol"]),
+        expiry_time_utc=datetime.fromisoformat(str(row["expiry_time_utc"])),
+        requested_quantity=Decimal(str(row["requested_quantity"])),
+        expected_net_credit=Decimal(str(row["expected_net_credit"])),
+        long_order_link_id=str(row["long_order_link_id"]),
+        short_order_link_id=(
+            None
+            if row["short_order_link_id"] is None
+            else str(row["short_order_link_id"])
+        ),
+        long_order_id=(
+            None if row["long_order_id"] is None else str(row["long_order_id"])
+        ),
+        short_order_id=(
+            None if row["short_order_id"] is None else str(row["short_order_id"])
+        ),
+        long_filled_quantity=Decimal(str(row["long_filled_quantity"])),
+        short_filled_quantity=Decimal(str(row["short_filled_quantity"])),
+        long_notional=Decimal(str(row["long_notional"])),
+        short_notional=Decimal(str(row["short_notional"])),
+        long_fees=Decimal(str(row["long_fees"])),
+        short_fees=Decimal(str(row["short_fees"])),
+        opened_time_utc=(
+            None if opened is None else datetime.fromisoformat(str(opened))
+        ),
+        version=int(row["version"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
 
 
 def _protection_values(snapshot: ProtectionSnapshot) -> tuple[object, ...]:

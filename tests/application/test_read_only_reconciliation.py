@@ -140,6 +140,7 @@ def test_reader_captures_all_private_state_needed_before_reconciliation() -> Non
         ("order_history", "linear", "ETHUSDT"),
         ("order_history", "option", None),
         ("executions", "linear", "ETHUSDT"),
+        ("executions", "option", None),
         ("positions", "linear", "ETHUSDT"),
         ("positions", "option", None),
         ("wallet", "UNIFIED", None),

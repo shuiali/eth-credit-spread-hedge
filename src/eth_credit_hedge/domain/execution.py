@@ -475,6 +475,7 @@ class ExchangePosition:
     unrealized_pnl: Decimal
     updated_at: datetime
     position_idx: int = 0
+    liquidation_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         _category(self.category)
@@ -483,6 +484,10 @@ class ExchangePosition:
         quantity = _decimal(self.quantity, "position quantity")
         average_price = _optional_decimal(self.average_price, "average price")
         mark_price = _optional_decimal(self.mark_price, "mark price")
+        liquidation_price = _optional_decimal(
+            self.liquidation_price,
+            "liquidation price",
+        )
         unrealized_pnl = _decimal(self.unrealized_pnl, "unrealized P&L")
         if quantity < ZERO:
             raise ValueError("position quantity cannot be negative")
@@ -494,11 +499,14 @@ class ExchangePosition:
             raise ValueError("average price must be positive")
         if mark_price is not None and mark_price <= ZERO:
             raise ValueError("mark price must be positive")
+        if liquidation_price is not None and liquidation_price <= ZERO:
+            raise ValueError("liquidation price must be positive")
         if type(self.position_idx) is not int or self.position_idx not in (0, 1, 2):
             raise ValueError("position index must be 0, 1, or 2")
         object.__setattr__(self, "quantity", quantity)
         object.__setattr__(self, "average_price", average_price)
         object.__setattr__(self, "mark_price", mark_price)
+        object.__setattr__(self, "liquidation_price", liquidation_price)
         object.__setattr__(self, "unrealized_pnl", unrealized_pnl)
         object.__setattr__(self, "updated_at", _utc(self.updated_at, "position time"))
 

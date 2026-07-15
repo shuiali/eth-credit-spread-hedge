@@ -11,11 +11,60 @@ from eth_credit_hedge.domain.execution import (
     PlaceOrderRequest,
 )
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
+from eth_credit_hedge.domain.live_option_execution import (
+    OptionSpreadExecutionSnapshot,
+)
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 from eth_credit_hedge.domain.live_recovery import RecoveryDebtSnapshot
 
 
 class ExecutionPersistencePort(Protocol):
+    async def persist_option_long_intent(
+        self,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None: ...
+
+    async def persist_option_short_intent(
+        self,
+        previous_version: int,
+        request: PlaceOrderRequest,
+        snapshot: OptionSpreadExecutionSnapshot,
+        persisted_at: datetime,
+    ) -> None: ...
+
+    async def load_option_spread_snapshot(
+        self,
+        cycle_id: str,
+    ) -> OptionSpreadExecutionSnapshot | None: ...
+
+    async def load_all_option_spread_snapshots(
+        self,
+    ) -> tuple[OptionSpreadExecutionSnapshot, ...]: ...
+
+    async def transition_option_spread_snapshot(
+        self,
+        previous_version: int,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None: ...
+
+    async def record_option_acknowledgement_and_snapshot(
+        self,
+        previous_version: int,
+        acknowledgement: OrderRequestAck,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> None: ...
+
+    async def record_option_execution_and_snapshot(
+        self,
+        previous_version: int,
+        execution: ExecutionUpdate,
+        received_at: datetime,
+        payload_hash: str,
+        snapshot: OptionSpreadExecutionSnapshot,
+    ) -> bool: ...
+
     async def persist_order_intent(
         self,
         request: PlaceOrderRequest,

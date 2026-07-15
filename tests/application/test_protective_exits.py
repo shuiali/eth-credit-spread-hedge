@@ -37,6 +37,8 @@ from eth_credit_hedge.domain.live_execution import (
     transition_entry_snapshot,
 )
 from eth_credit_hedge.domain.protected_execution import (
+    ProtectionSnapshot,
+    aggregate_protection_position_matches,
     apply_emergency_exit_execution,
 )
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
@@ -396,6 +398,50 @@ def test_emergency_fill_closes_reconciling_protection_as_error(
         return closed
 
     run_service_test(tmp_path, exercise)
+
+
+def test_aggregate_position_matches_two_independently_protected_levels() -> None:
+    snapshots = tuple(
+        ProtectionSnapshot(
+            entry_order_link_id=(
+                f"ECH-01-C0001-L{level_id:02d}-ENTRY-A01-A00{level_id}"
+            ),
+            state=LiveExecutionState.ACTIVE_PROTECTED,
+            entry_quantity=Decimal("0.1"),
+            open_quantity=Decimal("0.1"),
+            average_entry_price=Decimal("3000"),
+            entry_fees=Decimal("0"),
+            stop_order_link_id=(
+                f"ECH-01-C0001-L{level_id:02d}-STOP-A01-B00{level_id}"
+            ),
+            stop_order_id=f"stop-{level_id}",
+            stop_trigger_price=Decimal("3015"),
+            tp_order_link_id=None,
+            tp_order_id=None,
+            tp_price=None,
+            tp_filled_quantity=Decimal("0"),
+            stop_filled_quantity=Decimal("0"),
+            exit_notional=Decimal("0"),
+            exit_fees=Decimal("0"),
+            confirmed_recovery_debt=Decimal("0"),
+            pending_terminal_state=None,
+            version=1,
+            updated_at=NOW,
+        )
+        for level_id in (1, 2)
+    )
+    aggregate = ExchangePosition(
+        category="linear",
+        symbol="ETHUSDT",
+        side="Sell",
+        quantity=Decimal("0.2"),
+        average_price=Decimal("3000"),
+        mark_price=Decimal("2999"),
+        unrealized_pnl=Decimal("0"),
+        updated_at=NOW,
+    )
+
+    assert aggregate_protection_position_matches(snapshots, (aggregate,))
 
 
 def test_missing_stop_visibility_blocks_and_reconciles(tmp_path: Path) -> None:

@@ -448,6 +448,7 @@ def _expected_perp_quantity(local: LocalExecutionRecoveryState) -> Decimal:
             snapshot.filled_quantity
             for snapshot in local.entry_snapshots
             if snapshot.order_link_id not in protected
+            and snapshot.state is not LiveExecutionState.ERROR
         ),
         ZERO,
     )

@@ -369,6 +369,7 @@ def apply_emergency_exit_execution(
     execution: ExecutionUpdate,
     *,
     updated_at: datetime,
+    allocated_quantity: Decimal | None = None,
 ) -> ProtectionSnapshot:
     entry_id = ClientOrderId.parse(snapshot.entry_order_link_id)
     close_id = ClientOrderId.parse(execution.order_link_id)
@@ -376,30 +377,37 @@ def apply_emergency_exit_execution(
         close_id.role is not ClientOrderRole.EMERGENCY_CLOSE
         or close_id.strategy_instance != entry_id.strategy_instance
         or close_id.cycle != entry_id.cycle
-        or close_id.level != entry_id.level
     ):
         raise ValueError("emergency execution does not belong to this level")
     if execution.symbol != "ETHUSDT" or execution.side != "Buy":
         raise ValueError("emergency execution must buy ETHUSDT")
-    if execution.quantity > snapshot.open_quantity:
+    quantity = (
+        execution.quantity
+        if allocated_quantity is None
+        else _decimal(allocated_quantity, "emergency allocated quantity")
+    )
+    if quantity <= ZERO or quantity > execution.quantity:
+        raise ValueError("emergency allocation is outside the execution")
+    if quantity > snapshot.open_quantity:
         raise ValueError("emergency execution exceeds confirmed open quantity")
     allocated_entry_fee = (
-        snapshot.entry_fees * execution.quantity / snapshot.entry_quantity
+        snapshot.entry_fees * quantity / snapshot.entry_quantity
     )
+    allocated_exit_fee = execution.fee * quantity / execution.quantity
     debt = max(
-        (execution.price - snapshot.average_entry_price) * execution.quantity
+        (execution.price - snapshot.average_entry_price) * quantity
         + allocated_entry_fee
-        + execution.fee,
+        + allocated_exit_fee,
         ZERO,
     )
     return replace(
         snapshot,
         state=LiveExecutionState.ERROR,
-        open_quantity=snapshot.open_quantity - execution.quantity,
-        stop_filled_quantity=snapshot.stop_filled_quantity + execution.quantity,
+        open_quantity=snapshot.open_quantity - quantity,
+        stop_filled_quantity=snapshot.stop_filled_quantity + quantity,
         exit_notional=snapshot.exit_notional
-        + execution.price * execution.quantity,
-        exit_fees=snapshot.exit_fees + execution.fee,
+        + execution.price * quantity,
+        exit_fees=snapshot.exit_fees + allocated_exit_fee,
         confirmed_recovery_debt=snapshot.confirmed_recovery_debt + debt,
         pending_terminal_state=None,
         version=snapshot.version + 1,
@@ -443,4 +451,28 @@ def protection_position_matches(
         len(nonzero) == 1
         and nonzero[0].side == "Sell"
         and nonzero[0].quantity == snapshot.open_quantity
+    )
+
+
+def aggregate_protection_position_matches(
+    snapshots: tuple[ProtectionSnapshot, ...],
+    positions: tuple[ExchangePosition, ...],
+) -> bool:
+    expected = sum(
+        (snapshot.open_quantity for snapshot in snapshots),
+        ZERO,
+    )
+    nonzero = tuple(
+        position
+        for position in positions
+        if position.category == "linear"
+        and position.symbol == "ETHUSDT"
+        and position.quantity > ZERO
+    )
+    if expected == ZERO:
+        return not nonzero
+    return (
+        len(nonzero) == 1
+        and nonzero[0].side == "Sell"
+        and nonzero[0].quantity == expected
     )

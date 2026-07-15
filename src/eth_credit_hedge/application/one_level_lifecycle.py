@@ -137,7 +137,7 @@ class OneLevelLifecycleService:
         stop_rate: Decimal,
         take_profit_price: Decimal,
     ) -> ProtectedOneLevel:
-        entry = await self._await_entry_fill(entry)
+        entry = await self.await_entry_fill(entry)
         positions = await self._account.get_positions("linear", "ETHUSDT")
         if not await self._entry.reconcile_position(positions):
             raise LifecyclePositionMismatchError(
@@ -162,6 +162,12 @@ class OneLevelLifecycleService:
                 "protected quantity does not match the ETHUSDT position"
             )
         return ProtectedOneLevel(entry=entry, protection=protection)
+
+    async def await_entry_fill(
+        self,
+        entry: EntryExecutionSnapshot,
+    ) -> EntryExecutionSnapshot:
+        return await self._await_entry_fill(entry)
 
     async def await_exit(
         self,

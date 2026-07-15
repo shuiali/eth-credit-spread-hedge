@@ -16,6 +16,9 @@ from eth_credit_hedge.application.emergency_flatten import EmergencyFlattenServi
 from eth_credit_hedge.application.execution_hash import execution_payload_hash
 from eth_credit_hedge.application.one_level_entry import OneLevelEntryService
 from eth_credit_hedge.application.one_level_coordinator import OneLevelCoordinator
+from eth_credit_hedge.application.multi_level_execution import (
+    MultiLevelCoordinator,
+)
 from eth_credit_hedge.application.one_level_lifecycle import (
     OneLevelLifecycleService,
     ProtectedOneLevel,
@@ -65,6 +68,10 @@ from eth_credit_hedge.domain.instruments import (
 from eth_credit_hedge.domain.live_option_execution import (
     OptionSpreadExecutionSnapshot,
 )
+from eth_credit_hedge.domain.live_execution import (
+    EntryExecutionSnapshot,
+    transition_entry_snapshot,
+)
 from eth_credit_hedge.domain.option_lifecycle import (
     OptionEntryPolicy,
     UnmatchedLongPolicy,
@@ -85,6 +92,7 @@ from eth_credit_hedge.domain.market_data import (
 )
 from eth_credit_hedge.domain.protected_execution import (
     ProtectionSnapshot,
+    aggregate_protection_position_matches,
     apply_emergency_exit_execution,
 )
 from eth_credit_hedge.domain.reconciliation import ReconciliationReport
@@ -114,6 +122,7 @@ from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
 MUTATION_GATE_ENV = "RUN_BYBIT_DEMO_MUTATIONS"
 D3_MUTATION_TOKEN = "D3_MANUAL_ONE_LEVEL"
 D4_MUTATION_TOKEN = "D4_AUTOMATIC_ONE_LEVEL"
+D5_MUTATION_TOKEN = "D5_MULTIPLE_BASELINE_LEVELS"
 STRATEGY_INSTANCE = "D3"
 ZERO = Decimal("0")
 
@@ -205,6 +214,52 @@ class DemoD4Result:
                 "protected_restart_status": self.protected_restart_status,
                 "final_state": self.final_state,
                 "realized_pnl": str(self.realized_pnl),
+                "final_reconciliation_status": (
+                    self.final_reconciliation_status
+                ),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DemoD5Result:
+    option_cycle_id: str
+    perp_cycle_number: int
+    trigger_source: str
+    level_entry_prices: tuple[Decimal, ...]
+    crossing_prices: tuple[Decimal, ...]
+    aggregate_quantity: Decimal
+    average_entry_prices: tuple[Decimal, ...]
+    stop_trigger_prices: tuple[Decimal, ...]
+    protected_restart_status: str
+    final_states: tuple[str, ...]
+    realized_pnls: tuple[Decimal, ...]
+    final_reconciliation_status: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "option_cycle_id": self.option_cycle_id,
+                "perp_cycle_number": self.perp_cycle_number,
+                "trigger_source": self.trigger_source,
+                "level_entry_prices": [
+                    str(value) for value in self.level_entry_prices
+                ],
+                "crossing_prices": [
+                    str(value) for value in self.crossing_prices
+                ],
+                "aggregate_quantity": str(self.aggregate_quantity),
+                "average_entry_prices": [
+                    str(value) for value in self.average_entry_prices
+                ],
+                "stop_trigger_prices": [
+                    str(value) for value in self.stop_trigger_prices
+                ],
+                "protected_restart_status": self.protected_restart_status,
+                "final_states": list(self.final_states),
+                "realized_pnls": [str(value) for value in self.realized_pnls],
                 "final_reconciliation_status": (
                     self.final_reconciliation_status
                 ),
@@ -359,6 +414,85 @@ async def run_d4_automatic() -> DemoD4Result:
         )
         _require_matched(option_report, "D4 option reconciliation")
         return await _run_automatic_perp_cycle(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            deployment=deployment,
+            option=option,
+            cycle_number=cycle_number,
+        )
+    except BaseException:
+        await _make_perp_safe(
+            store=store,
+            private=private,
+            clock=clock,
+            cycle_number=cycle_number,
+        )
+        raise
+
+
+async def run_d5_multiple() -> DemoD5Result:
+    if os.environ.get(MUTATION_GATE_ENV) != D5_MUTATION_TOKEN:
+        raise DemoMutationRefusedError(
+            f"set {MUTATION_GATE_ENV}={D5_MUTATION_TOKEN} explicitly"
+        )
+    deployment = _demo_deployment_profile()
+    if not deployment.external_order_mutations_enabled:
+        raise DemoMutationRefusedError("demo profile disables order mutations")
+    if deployment.risk_limits.maximum_perp_quantity != Decimal("0.20"):
+        raise DemoMutationRefusedError("D5 requires the sealed 0.20 ETH demo cap")
+    credentials = load_bybit_demo_profile()
+    if (
+        credentials.rest_base_url != deployment.rest_base_url
+        or credentials.private_websocket_url
+        != deployment.private_websocket_url
+    ):
+        raise DemoMutationRefusedError("demo credential endpoints do not match")
+
+    clock = ServerClock(
+        max_absolute_offset_ms=deployment.maximum_clock_drift_ms,
+    )
+    private = BybitPrivateRestClient(profile=credentials, clock=clock)
+    public = BybitPublicRestClient()
+    store = SqliteExecutionStore(deployment.database_path)
+    await store.initialize()
+    await _synchronize_clock(private)
+    await _apply_recorded_emergency_exits(store, clock)
+    await _reconcile_late_option_longs(
+        store=store,
+        private=private,
+        clock=clock,
+    )
+    cycle_number = _next_cycle_number(await store.load_all_order_intents())
+    initial_report, initial_exchange = await _reconcile(
+        store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(initial_report, "initial D5 reconciliation")
+    _require_one_way_account(initial_exchange)
+    await _ensure_option_margin_mode(private)
+
+    try:
+        option = await _open_or_load_option_spread(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            cycle_number=cycle_number,
+            deployment=deployment,
+        )
+        await _synchronize_clock(private)
+        option_report, _ = await _reconcile(
+            store,
+            private,
+            clock,
+            cycle_number=cycle_number,
+        )
+        _require_matched(option_report, "D5 option reconciliation")
+        return await _run_multiple_perp_cycle(
             store=store,
             private=private,
             public=public,
@@ -580,6 +714,320 @@ async def _run_automatic_perp_cycle(
     )
 
 
+async def _run_multiple_perp_cycle(
+    *,
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    public: BybitPublicRestClient,
+    clock: ServerClock,
+    deployment: EnvironmentProfile,
+    option: OptionSpreadExecutionSnapshot,
+    cycle_number: int,
+) -> DemoD5Result:
+    instrument, option_instruments, option_quotes, wallet = await asyncio.gather(
+        public.get_instrument("ETHUSDT"),
+        public.list_instruments("option", base_coin="ETH"),
+        public.get_option_chain("ETH"),
+        private.get_wallet_state(),
+    )
+    if instrument.status != "Trading":
+        raise DemoMutationRefusedError("ETHUSDT is not Trading")
+    option_position = _put_spread_position(option, option_instruments)
+    quote_timestamps = _option_quote_timestamps(option, option_quotes)
+    entry_service, exit_service, lifecycle = _lifecycle_services(
+        store=store,
+        private=private,
+        instrument=instrument,
+        clock=clock,
+    )
+    market_data = BybitPublicMarketData(rest=public)
+    trade_stream = cast(
+        AsyncGenerator[TradeEvent, None],
+        market_data.stream_trades("ETHUSDT"),
+    )
+    active_entries: dict[int, EntryExecutionSnapshot] = {}
+    protections: dict[int, ProtectionSnapshot] = {}
+    crossing_prices: list[Decimal] = []
+    try:
+        first_trade = await asyncio.wait_for(anext(trade_stream), timeout=20)
+        tick = instrument.price_filter.tick_size
+        levels = tuple(
+            HedgeLevel(
+                level_id=level_id,
+                entry_price=first_trade.price - tick * level_id,
+                tp_price=(first_trade.price - tick * level_id)
+                * Decimal("0.995"),
+                stop_price=(first_trade.price - tick * level_id)
+                * Decimal("1.005"),
+                option_budget=(
+                    option.matched_quantity
+                    * (first_trade.price - tick * level_id)
+                    * Decimal("0.005")
+                ),
+            )
+            for level_id in (1, 2)
+        )
+        if any(level.entry_price <= ZERO for level in levels):
+            raise DemoMutationRefusedError("D5 level price is invalid")
+        coordinator = MultiLevelCoordinator(
+            entry_service=entry_service,
+            store=store,
+            option_position=option_position,
+            levels=levels,
+            instrument=instrument,
+            risk_engine=RiskEngine(),
+            risk_limits=deployment.risk_limits,
+            order_link_id_factory=lambda level_id, attempt: str(
+                ClientOrderId.new(
+                    STRATEGY_INSTANCE,
+                    cycle_number,
+                    level_id,
+                    ClientOrderRole.HEDGE_ENTRY,
+                    attempt,
+                )
+            ),
+        )
+        router = TriggerPriceRouter(TriggerPriceSource.LAST_TRADE)
+        first_trigger = router.from_trade(first_trade)
+        if first_trigger is None:
+            raise AssertionError("LAST_TRADE router rejected a trade")
+        debt, realized_loss = await _demo_loss_state(store)
+        armed = await coordinator.on_trigger(
+            first_trigger,
+            _demo_market_health(
+                first_trade,
+                quote_timestamps,
+                deployment,
+                clock,
+            ),
+            _d5_risk_state(
+                price=first_trade.price,
+                wallet_equity=wallet.total_equity,
+                debt=debt,
+                realized_loss=realized_loss,
+                active_entries=0,
+                current_quantity=ZERO,
+                current_notional=ZERO,
+            ),
+        )
+        if armed.entries or armed.blocked or armed.reasons:
+            raise DemoMutationRefusedError(
+                "first D5 trade did not arm a clean crossing segment"
+            )
+
+        async with asyncio.timeout(90):
+            async for trade in trade_stream:
+                if _quotes_need_refresh(quote_timestamps, clock):
+                    await _synchronize_clock(private)
+                    option_quotes = await public.get_option_chain("ETH")
+                    quote_timestamps = _option_quote_timestamps(
+                        option,
+                        option_quotes,
+                    )
+                trigger = router.from_trade(trade)
+                if trigger is None:
+                    raise AssertionError("LAST_TRADE router rejected a trade")
+                current_quantity = sum(
+                    (entry.filled_quantity for entry in active_entries.values()),
+                    start=ZERO,
+                )
+                current_notional = sum(
+                    (entry.entry_notional for entry in active_entries.values()),
+                    start=ZERO,
+                )
+                result = await coordinator.on_trigger(
+                    trigger,
+                    _demo_market_health(
+                        trade,
+                        quote_timestamps,
+                        deployment,
+                        clock,
+                    ),
+                    _d5_risk_state(
+                        price=trade.price,
+                        wallet_equity=wallet.total_equity,
+                        debt=debt,
+                        realized_loss=realized_loss,
+                        active_entries=len(active_entries),
+                        current_quantity=current_quantity,
+                        current_notional=current_notional,
+                    ),
+                )
+                if result.blocked:
+                    reasons = "; ".join(
+                        reason
+                        for block in result.blocked
+                        for reason in block.reasons
+                    )
+                    raise DemoMutationRefusedError(
+                        "D5 baseline entry was blocked: " + reasons
+                    )
+                if not result.entries:
+                    continue
+                await _synchronize_clock(private)
+                filled_batch: list[tuple[int, EntryExecutionSnapshot]] = []
+                for submission in result.entries:
+                    filled = await lifecycle.await_entry_fill(
+                        submission.snapshot
+                    )
+                    filled_batch.append((submission.level_id, filled))
+                positions = await private.get_positions("linear", "ETHUSDT")
+                if not await coordinator.reconcile_aggregate_position(positions):
+                    raise DemoMutationRefusedError(
+                        "D5 aggregate entry position did not reconcile"
+                    )
+                for level_id, filled in filled_batch:
+                    level = levels[level_id - 1]
+                    stop_id = str(
+                        ClientOrderId.new(
+                            STRATEGY_INSTANCE,
+                            cycle_number,
+                            level_id,
+                            ClientOrderRole.HEDGE_STOP,
+                            1,
+                        )
+                    )
+                    tp_id = str(
+                        ClientOrderId.new(
+                            STRATEGY_INSTANCE,
+                            cycle_number,
+                            level_id,
+                            ClientOrderRole.HEDGE_TP,
+                            1,
+                        )
+                    )
+                    protected = await exit_service.install_stop(
+                        filled.order_link_id,
+                        instrument,
+                        stop_id,
+                        stop_rate=Decimal("0.005"),
+                    )
+                    protected = await exit_service.install_take_profit(
+                        protected,
+                        instrument,
+                        tp_id,
+                        desired_price=level.tp_price,
+                    )
+                    active_entries[level_id] = filled
+                    protections[level_id] = protected
+                    crossing_prices.append(trade.price)
+                if len(active_entries) == 2:
+                    break
+    except TimeoutError as exc:
+        raise DemoMutationRefusedError(
+            "both D5 LAST_TRADE levels did not cross within 90 seconds"
+        ) from exc
+    finally:
+        await trade_stream.aclose()
+
+    if len(active_entries) != 2 or len(protections) != 2:
+        raise DemoMutationRefusedError("D5 did not protect exactly two levels")
+    positions = await private.get_positions("linear", "ETHUSDT")
+    ordered_protections = tuple(protections[index] for index in (1, 2))
+    if not aggregate_protection_position_matches(
+        ordered_protections,
+        positions,
+    ):
+        raise DemoMutationRefusedError(
+            "D5 protected aggregate position does not reconcile"
+        )
+    await _verify_liquidation_distance(
+        private,
+        deployment=deployment,
+        instrument=instrument,
+    )
+
+    await _synchronize_clock(private)
+    restarted_store = SqliteExecutionStore(deployment.database_path)
+    await restarted_store.initialize()
+    restart_report, _ = await _reconcile(
+        restarted_store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(restart_report, "D5 protected restart reconciliation")
+    _, _, restarted_lifecycle = _lifecycle_services(
+        store=restarted_store,
+        private=private,
+        instrument=instrument,
+        clock=clock,
+    )
+    closed: list[ProtectionSnapshot] = []
+    for level_id in (1, 2):
+        fresh_book = await public.get_orderbook_snapshot("ETHUSDT", 1)
+        marketable_tp = quantize_limit_price(
+            fresh_book.asks[0][0] + tick * 10,
+            tick,
+            side="Buy",
+            policy=PriceQuantizationPolicy.AGGRESSIVE,
+        )
+        await _synchronize_clock(private)
+        protection = protections[level_id]
+        if protection.tp_order_link_id is None:
+            raise AssertionError("D5 protected level has no TP")
+        try:
+            acknowledgement = await private.amend_order(
+                AmendOrderRequest(
+                    category="linear",
+                    symbol="ETHUSDT",
+                    order_link_id=protection.tp_order_link_id,
+                    price=marketable_tp,
+                )
+            )
+            await restarted_store.record_acknowledgement(acknowledgement)
+        except (BybitUnknownOrderError, UncertainOrderOutcomeError):
+            pass
+        closed.append(
+            await restarted_lifecycle.await_exit(
+                protection.entry_order_link_id
+            )
+        )
+
+    await _synchronize_clock(private)
+    final_store = SqliteExecutionStore(deployment.database_path)
+    await final_store.initialize()
+    final_report, final_exchange = await _reconcile(
+        final_store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(final_report, "final D5 reconciliation")
+    if any(
+        position.category == "linear" and position.quantity > ZERO
+        for position in final_exchange.positions
+    ):
+        raise RuntimeError("ETHUSDT position remains after D5 exits")
+
+    ordered_entries = tuple(active_entries[index] for index in (1, 2))
+    average_prices = tuple(
+        entry.average_entry_price for entry in ordered_entries
+    )
+    if any(price is None for price in average_prices):
+        raise AssertionError("D5 entry has no actual average price")
+    return DemoD5Result(
+        option_cycle_id=option.cycle_id,
+        perp_cycle_number=cycle_number,
+        trigger_source=TriggerPriceSource.LAST_TRADE.value,
+        level_entry_prices=tuple(level.entry_price for level in levels),
+        crossing_prices=tuple(crossing_prices),
+        aggregate_quantity=sum(
+            (entry.filled_quantity for entry in ordered_entries),
+            start=ZERO,
+        ),
+        average_entry_prices=cast(tuple[Decimal, ...], average_prices),
+        stop_trigger_prices=tuple(
+            protection.stop_trigger_price
+            for protection in ordered_protections
+        ),
+        protected_restart_status=restart_report.status.value,
+        final_states=tuple(item.state.value for item in closed),
+        realized_pnls=tuple(item.realized_pnl for item in closed),
+        final_reconciliation_status=final_report.status.value,
+    )
+
+
 def _put_spread_position(
     snapshot: OptionSpreadExecutionSnapshot,
     instruments: tuple[InstrumentSpec, ...],
@@ -714,6 +1162,35 @@ def _demo_risk_state(
         entries_for_level=0,
         active_levels=0,
         order_requests_last_minute=0,
+        consecutive_reconciliation_failures=0,
+        market_data_fresh=True,
+        reconciliation_succeeded=True,
+    )
+
+
+def _d5_risk_state(
+    *,
+    price: Decimal,
+    wallet_equity: Decimal,
+    debt: Decimal,
+    realized_loss: Decimal,
+    active_entries: int,
+    current_quantity: Decimal,
+    current_notional: Decimal,
+) -> RiskState:
+    if wallet_equity <= ZERO:
+        raise DemoMutationRefusedError("demo wallet has no positive equity")
+    return RiskState(
+        current_perp_quantity=current_quantity,
+        current_perp_notional=current_notional,
+        post_trade_margin_usage=(Decimal("0.20") * price) / wallet_equity,
+        post_trade_liquidation_distance=Decimal("1"),
+        confirmed_recovery_debt=debt,
+        realized_cycle_loss=realized_loss,
+        daily_realized_loss=realized_loss,
+        entries_for_level=0,
+        active_levels=active_entries,
+        order_requests_last_minute=active_entries * 3,
         consecutive_reconciliation_failures=0,
         market_data_fresh=True,
         reconciliation_succeeded=True,
@@ -1500,28 +1977,74 @@ async def _apply_emergency_exit(
     clock: ServerClock,
 ) -> None:
     close_id = ClientOrderId.parse(execution.order_link_id)
+    if close_id.role is not ClientOrderRole.EMERGENCY_CLOSE:
+        raise ValueError("execution is not an emergency close")
     matches: list[ProtectionSnapshot] = []
     for snapshot in await store.load_all_protection_snapshots():
         entry_id = ClientOrderId.parse(snapshot.entry_order_link_id)
         if (
             entry_id.strategy_instance == close_id.strategy_instance
             and entry_id.cycle == close_id.cycle
-            and entry_id.level == close_id.level
         ):
             matches.append(snapshot)
-    if not matches:
-        return
-    if len(matches) != 1:
-        raise RuntimeError("emergency execution matches multiple levels")
-    snapshot = matches[0]
-    if snapshot.open_quantity == ZERO:
-        return
-    updated = apply_emergency_exit_execution(
-        snapshot,
-        execution,
-        updated_at=_clock_time(clock),
+    entry_snapshots = await store.load_all_entry_snapshots()
+    protected_entry_ids = {
+        snapshot.entry_order_link_id for snapshot in matches
+    }
+    unprotected_entries = tuple(
+        snapshot
+        for snapshot in entry_snapshots
+        if snapshot.order_link_id not in protected_entry_ids
+        and snapshot.state is not LiveExecutionState.ERROR
+        and snapshot.filled_quantity > ZERO
+        and ClientOrderId.parse(snapshot.order_link_id).strategy_instance
+        == close_id.strategy_instance
+        and ClientOrderId.parse(snapshot.order_link_id).cycle == close_id.cycle
     )
-    await store.transition_protection_snapshot(snapshot.version, updated)
+    total_open = sum(
+        (snapshot.open_quantity for snapshot in matches),
+        start=ZERO,
+    )
+    active_exposure = total_open + sum(
+        (snapshot.filled_quantity for snapshot in unprotected_entries),
+        start=ZERO,
+    )
+    if active_exposure == ZERO:
+        return
+    remaining = min(execution.quantity, active_exposure)
+    ordered = sorted(
+        matches,
+        key=lambda snapshot: ClientOrderId.parse(
+            snapshot.entry_order_link_id
+        ).level,
+    )
+    for snapshot in ordered:
+        allocation = min(snapshot.open_quantity, remaining)
+        if allocation == ZERO:
+            continue
+        updated = apply_emergency_exit_execution(
+            snapshot,
+            execution,
+            updated_at=_clock_time(clock),
+            allocated_quantity=allocation,
+        )
+        await store.transition_protection_snapshot(snapshot.version, updated)
+        remaining -= allocation
+    for entry_snapshot in sorted(
+        unprotected_entries,
+        key=lambda item: ClientOrderId.parse(item.order_link_id).level,
+    ):
+        if entry_snapshot.filled_quantity > remaining:
+            break
+        errored = transition_entry_snapshot(
+            entry_snapshot,
+            LiveExecutionState.ERROR,
+            updated_at=_clock_time(clock),
+        )
+        await store.transition_entry_snapshot(entry_snapshot.version, errored)
+        remaining -= entry_snapshot.filled_quantity
+    if remaining != ZERO:
+        raise RuntimeError("emergency execution was not fully allocated")
 
 
 async def _ensure_option_margin_mode(
@@ -1645,13 +2168,19 @@ def _strike(symbol: str) -> Decimal:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("d3-manual", "d4-automatic"))
+    parser.add_argument(
+        "stage",
+        choices=("d3-manual", "d4-automatic", "d5-multiple"),
+    )
     args = parser.parse_args()
     if args.stage == "d3-manual":
         print(asyncio.run(run_d3_manual()).to_json())
         return 0
     if args.stage == "d4-automatic":
         print(asyncio.run(run_d4_automatic()).to_json())
+        return 0
+    if args.stage == "d5-multiple":
+        print(asyncio.run(run_d5_multiple()).to_json())
         return 0
     raise AssertionError("argparse returned an unknown demo stage")
 

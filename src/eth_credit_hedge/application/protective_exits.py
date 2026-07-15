@@ -24,13 +24,13 @@ from eth_credit_hedge.domain.instrument_rules import (
 from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.protected_execution import (
     ProtectionSnapshot,
+    aggregate_protection_position_matches,
     add_take_profit_intent,
     apply_exit_execution,
     confirm_exit_reconciliation,
     confirm_stop,
     confirm_take_profit,
     mark_protection_reconciling,
-    protection_position_matches,
     replace_stop_intent,
 )
 from eth_credit_hedge.ports.account import AccountPort
@@ -316,7 +316,11 @@ class ProtectiveExitService:
         unexplained_exit = any(
             order.order_link_id in exit_ids for order in remaining_orders
         )
-        if unexplained_exit or not protection_position_matches(snapshot, positions):
+        all_snapshots = await self._store.load_all_protection_snapshots()
+        if unexplained_exit or not aggregate_protection_position_matches(
+            all_snapshots,
+            positions,
+        ):
             return await self._set_reconciling(snapshot)
 
         closed = confirm_exit_reconciliation(

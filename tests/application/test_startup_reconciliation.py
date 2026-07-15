@@ -222,6 +222,27 @@ def test_exact_orders_position_and_protection_match() -> None:
     assert report.trading_allowed
 
 
+def test_emergency_closed_error_entry_does_not_expect_an_open_position() -> None:
+    local = LocalExecutionRecoveryState(
+        order_intents=(entry_intent(),),
+        entry_snapshots=(
+            replace(entry_snapshot(), state=LiveExecutionState.ERROR),
+        ),
+        protection_snapshots=(),
+        expected_option_positions=(),
+    )
+
+    report = evaluate_startup_reconciliation(
+        local,
+        exchange_snapshot(orders=(), positions=()),
+        strategy_instance="01",
+        cycle_number=1,
+    )
+
+    assert report.status is ReconciliationStatus.MATCHED
+    assert report.trading_allowed
+
+
 def test_strategy_owned_unknown_order_is_repairable_but_not_auto_imported() -> None:
     owned = PlaceOrderRequest(
         category="linear",

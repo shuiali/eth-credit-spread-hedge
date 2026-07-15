@@ -307,7 +307,7 @@ BybitDemoAdapter
 
 ## Acceptance gate
 
-- [ ] One virtual level triggers on demo.
+- [x] One virtual level triggers on demo.
 - [x] Client order IDs are persisted before submission.
 - [x] Executions determine actual quantity.
 - [x] Position receives exchange-hosted protection.

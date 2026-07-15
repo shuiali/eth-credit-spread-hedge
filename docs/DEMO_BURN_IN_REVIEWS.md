@@ -70,8 +70,25 @@ Status: PASSED (2026-07-15, automated operator run).
 
 ## D4 Automatic one-level hedge
 
-Status: NOT RUN. Record LAST_TRADE crossing, quantization, risk decision, complete
-lifecycle, restart evidence, operator, and review decision.
+Status: PASSED (2026-07-15, automated operator run).
+
+- Trigger source: normalized public WebSocket `LAST_TRADE`; the first trade at
+  1868.88 armed a level at the valid 0.01 tick price 1868.87.
+- Crossing: a subsequent trade at 1868.85 crossed downward on the same
+  connection generation (`1`) at `2026-07-15T02:01:16.903000+00:00`.
+- Decision: the one-level coordinator accepted fresh market/option data,
+  quantized the proposal and the independent risk engine approved exactly 0.1
+  ETH. Quantity, notional, projected stop loss, margin use, liquidation-distance
+  precheck and existing audit debt all remained inside the sealed demo limits.
+- Execution: cycle `D3-C0005` persisted and submitted one 0.1 ETHUSDT market
+  short. Actual average entry was 1868.56 and the exchange confirmed its
+  reduce-only, close-on-trigger stop at 1877.91 before the TP was accepted.
+- Restart and exit: a fresh SQLite/private-state restart reconciled `MATCHED`;
+  the controlled TP path then closed the position with actual P&L of
+  -0.1411422 USDT, reconciled the sibling stop and finished flat with final
+  status `MATCHED`.
+- Review decision: D4 passed. No reconnect boundary, stale event or non-trade
+  source was allowed to infer the crossing; multiple levels remained disabled.
 
 ## D5 Multiple baseline levels
 

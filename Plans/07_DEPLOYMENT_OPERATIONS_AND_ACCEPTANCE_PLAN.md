@@ -274,7 +274,7 @@ Each includes detection, automatic action, manual action, verification and revie
 ## Final acceptance gate
 
 - [x] Shadow mode is consistent.
-- [ ] One-level demo lifecycle repeatedly passes.
+- [x] One-level demo lifecycle repeatedly passes.
 - [x] Restart/reconciliation passes.
 - [ ] Multiple levels pass demo.
 - [ ] Recovery passes with actual fills.

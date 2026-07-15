@@ -56,7 +56,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 
 ## One-level demo
 
-- [ ] Trigger.
+- [x] Trigger.
 - [x] Persist intent.
 - [x] Entry submission.
 - [x] Confirm actual fill.
@@ -154,7 +154,7 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Public data demo passed.
 - [x] Read-only private passed.
 - [x] Manual one-level demo passed.
-- [ ] Automatic one-level demo passed.
+- [x] Automatic one-level demo passed.
 - [x] Restart demo passed.
 - [ ] Multiple levels passed.
 - [ ] Recovery passed.

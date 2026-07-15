@@ -109,7 +109,7 @@ from eth_credit_hedge.domain.risk import (
     RiskState,
     TradeProposal,
 )
-from eth_credit_hedge.infrastructure.bybit.clock import ServerClock
+from eth_credit_hedge.infrastructure.bybit.clock import ClockStaleError, ServerClock
 from eth_credit_hedge.infrastructure.bybit.error_mapping import (
     BybitUnknownOrderError,
 )
@@ -710,7 +710,7 @@ async def _run_recovery_perp_cycle(
         private=private,
         instrument=instrument,
         clock=clock,
-        fill_attempts=50,
+        fill_attempts=30,
         fill_interval_seconds=1,
     )
     await _synchronize_clock(private)
@@ -891,7 +891,7 @@ async def _run_recovery_perp_cycle(
         private=private,
         instrument=instrument,
         clock=clock,
-        fill_attempts=50,
+        fill_attempts=30,
         fill_interval_seconds=1,
     )
     recovery_closed = await _await_d6_exit(
@@ -1063,10 +1063,12 @@ async def _await_d6_exit(
     private: BybitPrivateRestClient,
 ) -> ProtectionSnapshot:
     last_error: ExitFillNotConfirmedError | None = None
-    for _ in range(12):
+    for _ in range(20):
         await _synchronize_clock(private)
         try:
             return await lifecycle.await_exit(entry_order_link_id)
+        except ClockStaleError:
+            continue
         except ExitFillNotConfirmedError as exc:
             last_error = exc
     if last_error is None:

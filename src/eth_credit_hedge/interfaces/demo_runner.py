@@ -668,7 +668,7 @@ async def _run_recovery_perp_cycle(
         side="Sell",
         policy=PriceQuantizationPolicy.PASSIVE,
     )
-    tp_distance = max(Decimal("2.50"), tick * Decimal("250"))
+    tp_distance = max(Decimal("2.75"), tick * Decimal("275"))
     tp_price = entry_price - tp_distance
     if tp_price <= ZERO:
         raise DemoMutationRefusedError("D6 TP price is invalid")

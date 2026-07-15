@@ -67,9 +67,9 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Create TP.
 - [x] Confirm TP.
 - [x] Process TP.
-- [ ] Process stop.
+- [x] Process stop.
 - [x] Reconcile sibling exit.
-- [ ] Actual P&L and debt.
+- [x] Actual P&L and debt.
 - [x] Restart recovery.
 
 ## Persistence and reconciliation

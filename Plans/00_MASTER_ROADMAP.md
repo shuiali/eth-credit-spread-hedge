@@ -1,6 +1,6 @@
 # ETH Credit-Spread Dynamic Hedge — Complete Implementation Roadmap
 
-**Status date:** 2026-07-14  
+**Status date:** 2026-07-15  
 **Current baseline:** deterministic ETH put-credit-spread hedge with virtual levels, exact crossing fills, fixed 0.15% stops, same-level re-entry, full-next-TP recovery, premium stop budget, accounting snapshots, historical replay, Monte Carlo, dashboard, and public Bybit option-chain parsing.
 
 ## 1. Purpose

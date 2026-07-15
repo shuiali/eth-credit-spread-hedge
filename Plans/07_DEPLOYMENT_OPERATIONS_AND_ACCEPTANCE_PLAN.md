@@ -277,7 +277,7 @@ Each includes detection, automatic action, manual action, verification and revie
 - [x] One-level demo lifecycle repeatedly passes.
 - [x] Restart/reconciliation passes.
 - [x] Multiple levels pass demo.
-- [ ] Recovery passes with actual fills.
+- [x] Recovery passes with actual fills.
 - [x] Kill switches pass.
 - [x] Alerts pass.
 - [x] Production limits are finite.

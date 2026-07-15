@@ -115,5 +115,38 @@ Status: PASSED (2026-07-15, automated operator run).
 
 ## D6 Full-next-TP recovery
 
-Status: NOT RUN. Record actual stop debt, quantized recovery, finite risk limits,
-allocation/settlement, rejection behavior, operator, and review decision.
+Status: PASSED (2026-07-15, automated operator run).
+
+- Actual stop debt: cycle `D3-C0016` sold the 0.1 ETH baseline at an actual
+  average of 1876.38. Its reduce-only stop was hosted at 1876.76 and filled at
+  1876.82. Entry, stop loss and execution fees produced 0.2504260 USDT of
+  confirmed debt; projected debt did not affect the recovery quantity.
+- Finite sizing: `FULL_NEXT_TP` requested 0.191064 ETH from the 0.275 USDT zone
+  budget plus confirmed debt over the 2.75 USDT TP distance. Quantity rounded
+  upward to the valid 0.20 ETH step and stayed inside the sealed 0.20 ETH,
+  500 USDT notional and 2 USDT projected-stop caps.
+- Rejection behavior: the same plan was evaluated against a deliberately
+  stricter finite quantity cap. It sent no order, allocated no debt and locked
+  the level to `CLOSE_OPTION_STRATEGY` rather than silently reducing quantity.
+- Same-level trigger: normalized public `LAST_TRADE` crossed downward at
+  1876.37 on connection generation 1 at
+  `2026-07-15T04:51:09.881000+00:00`. Stale segments, reconnect boundaries and
+  transient option-quote timeouts could not authorize the recovery entry.
+- Recovery execution: the persistence-first 0.20 ETH request filled at an
+  actual average of 1876.40. Bybit confirmed a reduce-only, close-on-trigger
+  stop at 1885.79 and a reduce-only TP at 1873.62; a fresh store/private-state
+  restart reconciled `MATCHED` while both exits were live.
+- Settlement: the TP filled 0.20 ETH at 1873.62. Gross hedge P&L was 0.556 USDT,
+  entry and exit fees were 0.2813488 USDT, and actual realized P&L was
+  0.2746512 USDT. The net zone budget was zero after those fees, so explicit
+  settlement paid the full 0.2504260 USDT allocation and left exactly zero
+  remaining debt.
+- Final state: the recovery reached `CLOSED_TP`, its sibling stop reconciled,
+  the ETHUSDT position was flat and final reconciliation was `MATCHED`.
+- Fail-closed evidence: non-passing attempts exposed long-wait clock expiry,
+  transient public quote timeouts, host interruption and recovery-exit timeout.
+  The runner now renews clock samples, retries quote timeouts only with crossing
+  state reset, and rolls recorded emergency recovery losses into unallocated
+  debt idempotently on restart. No failed attempt was counted as a pass.
+- Review decision: D6 passed. Recovery remained same-level only; distributed
+  cross-level recovery and mainnet order mutation stayed disabled.

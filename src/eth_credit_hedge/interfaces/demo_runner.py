@@ -20,6 +20,7 @@ from eth_credit_hedge.application.multi_level_execution import (
     MultiLevelCoordinator,
 )
 from eth_credit_hedge.application.one_level_lifecycle import (
+    ExitFillNotConfirmedError,
     OneLevelLifecycleService,
     ProtectedOneLevel,
 )
@@ -709,7 +710,7 @@ async def _run_recovery_perp_cycle(
         private=private,
         instrument=instrument,
         clock=clock,
-        fill_attempts=600,
+        fill_attempts=50,
         fill_interval_seconds=1,
     )
     await _synchronize_clock(private)
@@ -743,7 +744,11 @@ async def _run_recovery_perp_cycle(
         deployment=deployment,
         instrument=instrument,
     )
-    baseline_closed = await lifecycle.await_exit(baseline_entry_id)
+    baseline_closed = await _await_d6_exit(
+        lifecycle,
+        baseline_entry_id,
+        private,
+    )
     if baseline_closed.state is not LiveExecutionState.CLOSED_STOP:
         raise DemoMutationRefusedError(
             "D6 baseline reached TP before an actual stop fill"
@@ -886,10 +891,14 @@ async def _run_recovery_perp_cycle(
         private=private,
         instrument=instrument,
         clock=clock,
-        fill_attempts=600,
+        fill_attempts=50,
         fill_interval_seconds=1,
     )
-    recovery_closed = await restarted_lifecycle.await_exit(recovery_entry_id)
+    recovery_closed = await _await_d6_exit(
+        restarted_lifecycle,
+        recovery_entry_id,
+        private,
+    )
     if recovery_closed.state is LiveExecutionState.CLOSED_STOP:
         recovery_projected_debt = max(
             (
@@ -1046,6 +1055,23 @@ async def _await_d6_recovery_crossing(
     finally:
         await trade_stream.aclose()
     raise AssertionError("D6 trade stream ended without a crossing")
+
+
+async def _await_d6_exit(
+    lifecycle: OneLevelLifecycleService,
+    entry_order_link_id: str,
+    private: BybitPrivateRestClient,
+) -> ProtectionSnapshot:
+    last_error: ExitFillNotConfirmedError | None = None
+    for _ in range(12):
+        await _synchronize_clock(private)
+        try:
+            return await lifecycle.await_exit(entry_order_link_id)
+        except ExitFillNotConfirmedError as exc:
+            last_error = exc
+    if last_error is None:
+        raise AssertionError("D6 exit wait did not run")
+    raise last_error
 
 
 def _d6_order_id(

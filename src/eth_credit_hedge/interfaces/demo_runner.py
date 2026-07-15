@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
@@ -33,6 +33,9 @@ from eth_credit_hedge.application.read_only_reconciliation import (
     BybitPrivateStateReader,
     ExpectedPosition,
     PrivateAccountSnapshot,
+)
+from eth_credit_hedge.application.same_level_recovery import (
+    SameLevelRecoveryService,
 )
 from eth_credit_hedge.application.startup_reconciliation import (
     LocalExecutionRecoveryState,
@@ -71,6 +74,10 @@ from eth_credit_hedge.domain.live_option_execution import (
 from eth_credit_hedge.domain.live_execution import (
     EntryExecutionSnapshot,
     transition_entry_snapshot,
+)
+from eth_credit_hedge.domain.live_recovery import (
+    LockedLevelAction,
+    SameLevelRecoveryPlanner,
 )
 from eth_credit_hedge.domain.option_lifecycle import (
     OptionEntryPolicy,
@@ -123,6 +130,7 @@ MUTATION_GATE_ENV = "RUN_BYBIT_DEMO_MUTATIONS"
 D3_MUTATION_TOKEN = "D3_MANUAL_ONE_LEVEL"
 D4_MUTATION_TOKEN = "D4_AUTOMATIC_ONE_LEVEL"
 D5_MUTATION_TOKEN = "D5_MULTIPLE_BASELINE_LEVELS"
+D6_MUTATION_TOKEN = "D6_FULL_NEXT_TP_RECOVERY"
 STRATEGY_INSTANCE = "D3"
 ZERO = Decimal("0")
 
@@ -264,6 +272,43 @@ class DemoD5Result:
                     self.final_reconciliation_status
                 ),
             },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DemoD6Result:
+    option_cycle_id: str
+    perp_cycle_number: int
+    level_id: int
+    baseline_average_entry_price: Decimal
+    baseline_stop_trigger_price: Decimal
+    baseline_stop_fill_price: Decimal
+    actual_stop_debt: Decimal
+    recovery_crossing_price: Decimal
+    recovery_crossing_time_utc: datetime
+    connection_generation: int
+    raw_recovery_quantity: Decimal
+    recovery_quantity: Decimal
+    expected_take_profit: Decimal
+    allocated_debt: Decimal
+    rejected_locked_action: str
+    recovery_average_entry_price: Decimal
+    recovery_take_profit_price: Decimal
+    recovery_state: str
+    recovery_realized_pnl: Decimal
+    net_zone_budget: Decimal
+    remaining_debt: Decimal
+    protected_restart_status: str
+    final_reconciliation_status: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            asdict(self),
+            default=lambda value: (
+                value.isoformat() if isinstance(value, datetime) else str(value)
+            ),
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -509,6 +554,515 @@ async def run_d5_multiple() -> DemoD5Result:
             cycle_number=cycle_number,
         )
         raise
+
+
+async def run_d6_recovery() -> DemoD6Result:
+    if os.environ.get(MUTATION_GATE_ENV) != D6_MUTATION_TOKEN:
+        raise DemoMutationRefusedError(
+            f"set {MUTATION_GATE_ENV}={D6_MUTATION_TOKEN} explicitly"
+        )
+    deployment = _demo_deployment_profile()
+    if not deployment.external_order_mutations_enabled:
+        raise DemoMutationRefusedError("demo profile disables order mutations")
+    if deployment.risk_limits.maximum_perp_quantity != Decimal("0.20"):
+        raise DemoMutationRefusedError("D6 requires the sealed 0.20 ETH demo cap")
+    credentials = load_bybit_demo_profile()
+    if (
+        credentials.rest_base_url != deployment.rest_base_url
+        or credentials.private_websocket_url
+        != deployment.private_websocket_url
+    ):
+        raise DemoMutationRefusedError("demo credential endpoints do not match")
+
+    clock = ServerClock(
+        max_absolute_offset_ms=deployment.maximum_clock_drift_ms,
+    )
+    private = BybitPrivateRestClient(profile=credentials, clock=clock)
+    public = BybitPublicRestClient()
+    store = SqliteExecutionStore(deployment.database_path)
+    await store.initialize()
+    await _synchronize_clock(private)
+    await _apply_recorded_emergency_exits(store, clock)
+    await _reconcile_late_option_longs(
+        store=store,
+        private=private,
+        clock=clock,
+    )
+    cycle_number = _next_cycle_number(await store.load_all_order_intents())
+    if cycle_number > 99:
+        raise DemoMutationRefusedError("D6 exhausted isolated demo level IDs")
+    initial_report, initial_exchange = await _reconcile(
+        store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(initial_report, "initial D6 reconciliation")
+    _require_one_way_account(initial_exchange)
+    await _ensure_option_margin_mode(private)
+
+    try:
+        option = await _open_or_load_option_spread(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            cycle_number=cycle_number,
+            deployment=deployment,
+        )
+        await _synchronize_clock(private)
+        option_report, _ = await _reconcile(
+            store,
+            private,
+            clock,
+            cycle_number=cycle_number,
+        )
+        _require_matched(option_report, "D6 option reconciliation")
+        return await _run_recovery_perp_cycle(
+            store=store,
+            private=private,
+            public=public,
+            clock=clock,
+            deployment=deployment,
+            option=option,
+            cycle_number=cycle_number,
+        )
+    except BaseException:
+        await _make_perp_safe(
+            store=store,
+            private=private,
+            clock=clock,
+            cycle_number=cycle_number,
+        )
+        raise
+
+
+async def _run_recovery_perp_cycle(
+    *,
+    store: SqliteExecutionStore,
+    private: BybitPrivateRestClient,
+    public: BybitPublicRestClient,
+    clock: ServerClock,
+    deployment: EnvironmentProfile,
+    option: OptionSpreadExecutionSnapshot,
+    cycle_number: int,
+) -> DemoD6Result:
+    instrument, book, option_instruments, option_quotes, wallet = (
+        await asyncio.gather(
+            public.get_instrument("ETHUSDT"),
+            public.get_orderbook_snapshot("ETHUSDT", 1),
+            public.list_instruments("option", base_coin="ETH"),
+            public.get_option_chain("ETH"),
+            private.get_wallet_state(),
+        )
+    )
+    if instrument.status != "Trading" or not book.bids or not book.asks:
+        raise DemoMutationRefusedError("ETHUSDT market is not executable")
+    level_id = cycle_number
+    tick = instrument.price_filter.tick_size
+    entry_price = quantize_limit_price(
+        book.bids[0][0],
+        tick,
+        side="Sell",
+        policy=PriceQuantizationPolicy.PASSIVE,
+    )
+    tp_distance = max(Decimal("3.50"), tick * Decimal("350"))
+    tp_price = entry_price - tp_distance
+    if tp_price <= ZERO:
+        raise DemoMutationRefusedError("D6 TP price is invalid")
+    level = HedgeLevel(
+        level_id=level_id,
+        entry_price=entry_price,
+        tp_price=tp_price,
+        stop_price=entry_price * Decimal("1.005"),
+        option_budget=option.matched_quantity * tp_distance,
+    )
+    quote_timestamps = _option_quote_timestamps(option, option_quotes)
+    _put_spread_position(option, option_instruments)
+    _approve_perp_risk(
+        quantity=option.matched_quantity,
+        reference_price=entry_price,
+        wallet_equity=wallet.total_equity,
+        deployment=deployment,
+    )
+
+    baseline_entry_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_ENTRY,
+        1,
+    )
+    baseline_stop_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_STOP,
+        1,
+    )
+    baseline_tp_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_TP,
+        1,
+    )
+    entry_service, exit_service, lifecycle = _lifecycle_services(
+        store=store,
+        private=private,
+        instrument=instrument,
+        clock=clock,
+        fill_attempts=600,
+        fill_interval_seconds=1,
+    )
+    await _synchronize_clock(private)
+    baseline_entry = await entry_service.submit_entry(
+        PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Sell",
+            order_type="Market",
+            quantity=option.matched_quantity,
+            order_link_id=baseline_entry_id,
+            time_in_force="IOC",
+            position_idx=0,
+        )
+    )
+    baseline_entry = await lifecycle.await_entry_fill(baseline_entry)
+    baseline_protection = await exit_service.install_stop(
+        baseline_entry_id,
+        instrument,
+        baseline_stop_id,
+        stop_rate=Decimal("0.0002"),
+    )
+    baseline_protection = await exit_service.install_take_profit(
+        baseline_protection,
+        instrument,
+        baseline_tp_id,
+        desired_price=level.tp_price,
+    )
+    await _verify_liquidation_distance(
+        private,
+        deployment=deployment,
+        instrument=instrument,
+    )
+    baseline_closed = await lifecycle.await_exit(baseline_entry_id)
+    if baseline_closed.state is not LiveExecutionState.CLOSED_STOP:
+        raise DemoMutationRefusedError(
+            "D6 baseline reached TP before an actual stop fill"
+        )
+    if (
+        baseline_closed.stop_filled_quantity == ZERO
+        or baseline_closed.confirmed_recovery_debt == ZERO
+    ):
+        raise DemoMutationRefusedError("D6 stop produced no confirmed debt")
+    baseline_average = baseline_entry.average_entry_price
+    if baseline_average is None:
+        raise AssertionError("D6 baseline entry has no actual average price")
+    baseline_stop_fill = (
+        baseline_closed.exit_notional / baseline_closed.stop_filled_quantity
+    )
+
+    recovery_service = SameLevelRecoveryService(
+        entry_service=entry_service,
+        store=store,
+        planner=SameLevelRecoveryPlanner(RiskEngine()),
+        clock=lambda: _clock_time(clock),
+    )
+    projected_debt = max(
+        (
+            baseline_closed.stop_trigger_price - baseline_average
+        )
+        * baseline_entry.filled_quantity
+        + baseline_entry.entry_fees * Decimal("2"),
+        ZERO,
+    )
+    debt_snapshot = await recovery_service.record_confirmed_stop_debt(
+        level_id=level_id,
+        actual_stop_debt=baseline_closed.confirmed_recovery_debt,
+        projected_debt=projected_debt,
+    )
+    global_debt, realized_loss = await _demo_loss_state(store)
+    recovery_risk = replace(
+        _demo_risk_state(
+            quantity=deployment.risk_limits.maximum_perp_quantity,
+            price=level.entry_price,
+            wallet_equity=wallet.total_equity,
+            debt=global_debt,
+            realized_loss=realized_loss,
+        ),
+        entries_for_level=1,
+        order_requests_last_minute=3,
+    )
+    rejected = await recovery_service.submit_recovery(
+        level=level,
+        instrument=instrument,
+        risk_state=recovery_risk,
+        limits=replace(
+            deployment.risk_limits,
+            maximum_perp_quantity=instrument.lot_size_filter.qty_step,
+        ),
+        order_link_id=_d6_order_id(
+            cycle_number,
+            level_id,
+            ClientOrderRole.HEDGE_ENTRY,
+            99,
+        ),
+    )
+    if (
+        rejected.plan.approved
+        or rejected.entry_snapshot is not None
+        or rejected.plan.locked_action
+        is not LockedLevelAction.CLOSE_OPTION_STRATEGY
+    ):
+        raise AssertionError("D6 finite-limit rejection did not lock the level")
+    if rejected.debt_snapshot != debt_snapshot:
+        raise AssertionError("rejected D6 recovery changed debt allocation")
+
+    crossing = await _await_d6_recovery_crossing(
+        public=public,
+        clock=clock,
+        deployment=deployment,
+        option=option,
+        quote_timestamps=quote_timestamps,
+        entry_price=level.entry_price,
+    )
+    recovery_entry_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_ENTRY,
+        2,
+    )
+    recovery_stop_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_STOP,
+        2,
+    )
+    recovery_tp_id = _d6_order_id(
+        cycle_number,
+        level_id,
+        ClientOrderRole.HEDGE_TP,
+        2,
+    )
+    await _synchronize_clock(private)
+    submission = await recovery_service.submit_recovery(
+        level=level,
+        instrument=instrument,
+        risk_state=recovery_risk,
+        limits=deployment.risk_limits,
+        order_link_id=recovery_entry_id,
+    )
+    if (
+        not submission.plan.approved
+        or submission.plan.quantity is None
+        or submission.entry_snapshot is None
+    ):
+        raise DemoMutationRefusedError(
+            "D6 recovery was blocked: " + "; ".join(submission.plan.reasons)
+        )
+    recovery_opened = await lifecycle.protect_submitted_entry(
+        submission.entry_snapshot,
+        stop_order_link_id=recovery_stop_id,
+        take_profit_order_link_id=recovery_tp_id,
+        stop_rate=Decimal("0.005"),
+        take_profit_price=level.tp_price,
+    )
+    await _verify_liquidation_distance(
+        private,
+        deployment=deployment,
+        instrument=instrument,
+    )
+
+    await _synchronize_clock(private)
+    restarted_store = SqliteExecutionStore(deployment.database_path)
+    await restarted_store.initialize()
+    restart_report, _ = await _reconcile(
+        restarted_store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(restart_report, "D6 protected recovery restart")
+    _, _, restarted_lifecycle = _lifecycle_services(
+        store=restarted_store,
+        private=private,
+        instrument=instrument,
+        clock=clock,
+        fill_attempts=600,
+        fill_interval_seconds=1,
+    )
+    recovery_closed = await restarted_lifecycle.await_exit(recovery_entry_id)
+    if recovery_closed.state is LiveExecutionState.CLOSED_STOP:
+        recovery_projected_debt = max(
+            (
+                recovery_closed.stop_trigger_price
+                - recovery_closed.average_entry_price
+            )
+            * recovery_closed.entry_quantity
+            + recovery_closed.entry_fees * Decimal("2"),
+            ZERO,
+        )
+        await SameLevelRecoveryService(
+            entry_service=entry_service,
+            store=restarted_store,
+            planner=SameLevelRecoveryPlanner(RiskEngine()),
+            clock=lambda: _clock_time(clock),
+        ).record_recovery_stop_debt(
+            level_id=level_id,
+            actual_stop_debt=recovery_closed.confirmed_recovery_debt,
+            projected_debt=recovery_projected_debt,
+        )
+        raise DemoMutationRefusedError("D6 recovery stopped before its TP")
+    if recovery_closed.state is not LiveExecutionState.CLOSED_TP:
+        raise DemoMutationRefusedError("D6 recovery did not reach a TP state")
+
+    net_zone_budget = max(
+        level.option_budget
+        - recovery_closed.entry_fees
+        - recovery_closed.exit_fees,
+        ZERO,
+    )
+    settled = await SameLevelRecoveryService(
+        entry_service=entry_service,
+        store=restarted_store,
+        planner=SameLevelRecoveryPlanner(RiskEngine()),
+        clock=lambda: _clock_time(clock),
+    ).settle_take_profit(
+        level_id=level_id,
+        realized_take_profit=recovery_closed.realized_pnl,
+        zone_budget=net_zone_budget,
+    )
+    if settled.debt.remaining_debt != ZERO:
+        raise DemoMutationRefusedError(
+            "D6 actual TP left confirmed recovery debt unpaid"
+        )
+
+    await _synchronize_clock(private)
+    final_store = SqliteExecutionStore(deployment.database_path)
+    await final_store.initialize()
+    final_report, final_exchange = await _reconcile(
+        final_store,
+        private,
+        clock,
+        cycle_number=cycle_number,
+    )
+    _require_matched(final_report, "final D6 reconciliation")
+    if any(
+        position.category == "linear" and position.quantity > ZERO
+        for position in final_exchange.positions
+    ):
+        raise RuntimeError("ETHUSDT position remains after D6 recovery")
+    recovery_average = recovery_opened.entry.average_entry_price
+    if recovery_average is None or recovery_closed.tp_filled_quantity == ZERO:
+        raise AssertionError("D6 recovery lacks actual TP execution data")
+    recovery_tp_fill = (
+        recovery_closed.exit_notional / recovery_closed.tp_filled_quantity
+    )
+    return DemoD6Result(
+        option_cycle_id=option.cycle_id,
+        perp_cycle_number=cycle_number,
+        level_id=level_id,
+        baseline_average_entry_price=baseline_average,
+        baseline_stop_trigger_price=baseline_closed.stop_trigger_price,
+        baseline_stop_fill_price=baseline_stop_fill,
+        actual_stop_debt=baseline_closed.confirmed_recovery_debt,
+        recovery_crossing_price=crossing.price,
+        recovery_crossing_time_utc=crossing.timestamp_utc,
+        connection_generation=crossing.connection_generation,
+        raw_recovery_quantity=submission.plan.raw_desired_quantity,
+        recovery_quantity=submission.plan.quantity,
+        expected_take_profit=submission.plan.expected_take_profit,
+        allocated_debt=submission.plan.allocated_debt,
+        rejected_locked_action=rejected.plan.locked_action.value,
+        recovery_average_entry_price=recovery_average,
+        recovery_take_profit_price=recovery_tp_fill,
+        recovery_state=recovery_closed.state.value,
+        recovery_realized_pnl=recovery_closed.realized_pnl,
+        net_zone_budget=net_zone_budget,
+        remaining_debt=settled.debt.remaining_debt,
+        protected_restart_status=restart_report.status.value,
+        final_reconciliation_status=final_report.status.value,
+    )
+
+
+async def _await_d6_recovery_crossing(
+    *,
+    public: BybitPublicRestClient,
+    clock: ServerClock,
+    deployment: EnvironmentProfile,
+    option: OptionSpreadExecutionSnapshot,
+    quote_timestamps: tuple[datetime, ...],
+    entry_price: Decimal,
+) -> TradeEvent:
+    market_data = BybitPublicMarketData(rest=public)
+    trade_stream = cast(
+        AsyncGenerator[TradeEvent, None],
+        market_data.stream_trades("ETHUSDT"),
+    )
+    router = TriggerPriceRouter(TriggerPriceSource.LAST_TRADE)
+    previous_price: Decimal | None = None
+    connection_generation: int | None = None
+    armed = False
+    try:
+        async with asyncio.timeout(600):
+            async for trade in trade_stream:
+                if _quotes_need_refresh(quote_timestamps, clock):
+                    quotes = await public.get_option_chain("ETH")
+                    quote_timestamps = _option_quote_timestamps(option, quotes)
+                trigger = router.from_trade(trade)
+                if trigger is None:
+                    raise AssertionError("LAST_TRADE router rejected a trade")
+                health = _demo_market_health(
+                    trade,
+                    quote_timestamps,
+                    deployment,
+                    clock,
+                )
+                if not health.trading_allowed:
+                    previous_price = None
+                    connection_generation = None
+                    armed = False
+                    continue
+                if connection_generation != trade.connection_generation:
+                    connection_generation = trade.connection_generation
+                    previous_price = trigger.observed_price
+                    armed = trigger.observed_price >= entry_price
+                    continue
+                if previous_price is None:
+                    raise AssertionError("fresh D6 segment has no previous price")
+                current_price = trigger.observed_price
+                if current_price >= entry_price:
+                    armed = True
+                crossed = (
+                    armed
+                    and previous_price > entry_price
+                    and current_price <= entry_price
+                )
+                previous_price = current_price
+                if crossed:
+                    return trade
+    except TimeoutError as exc:
+        raise DemoMutationRefusedError(
+            "no fresh same-level recovery crossing arrived within 10 minutes"
+        ) from exc
+    finally:
+        await trade_stream.aclose()
+    raise AssertionError("D6 trade stream ended without a crossing")
+
+
+def _d6_order_id(
+    cycle_number: int,
+    level_id: int,
+    role: ClientOrderRole,
+    attempt: int,
+) -> str:
+    return str(
+        ClientOrderId.new(
+            STRATEGY_INSTANCE,
+            cycle_number,
+            level_id,
+            role,
+            attempt,
+        )
+    )
 
 
 async def _run_automatic_perp_cycle(
@@ -1616,6 +2170,8 @@ def _lifecycle_services(
     private: BybitPrivateRestClient,
     instrument: InstrumentSpec,
     clock: ServerClock,
+    fill_attempts: int = 80,
+    fill_interval_seconds: float = 0.25,
 ) -> tuple[OneLevelEntryService, ProtectiveExitService, OneLevelLifecycleService]:
     entry = OneLevelEntryService(
         trading=private,
@@ -1638,8 +2194,8 @@ def _lifecycle_services(
         exit_service=exits,
         instrument=instrument,
         clock=lambda: _clock_time(clock),
-        fill_attempts=80,
-        fill_interval_seconds=0.25,
+        fill_attempts=fill_attempts,
+        fill_interval_seconds=fill_interval_seconds,
     )
     return entry, exits, lifecycle
 
@@ -2170,7 +2726,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "stage",
-        choices=("d3-manual", "d4-automatic", "d5-multiple"),
+        choices=(
+            "d3-manual",
+            "d4-automatic",
+            "d5-multiple",
+            "d6-recovery",
+        ),
     )
     args = parser.parse_args()
     if args.stage == "d3-manual":
@@ -2181,6 +2742,9 @@ def main() -> int:
         return 0
     if args.stage == "d5-multiple":
         print(asyncio.run(run_d5_multiple()).to_json())
+        return 0
+    if args.stage == "d6-recovery":
+        print(asyncio.run(run_d6_recovery()).to_json())
         return 0
     raise AssertionError("argparse returned an unknown demo stage")
 

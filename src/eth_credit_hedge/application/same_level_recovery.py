@@ -198,3 +198,31 @@ class SameLevelRecoveryService:
             settled,
         )
         return settled
+
+    async def record_recovery_stop_debt(
+        self,
+        *,
+        level_id: int,
+        actual_stop_debt: Decimal,
+        projected_debt: Decimal,
+    ) -> RecoveryDebtSnapshot:
+        current = await self._store.load_recovery_debt_snapshot(level_id)
+        if current is None:
+            raise ValueError("recovery debt snapshot does not exist")
+        if current.debt.allocated_debt == Decimal("0"):
+            raise ValueError("recovery stop requires explicitly allocated debt")
+        released = release_allocated_debt(current.debt)
+        stopped = replace(
+            current,
+            debt=add_confirmed_stop_debt(
+                replace(released, projected_debt=projected_debt),
+                actual_stop_debt,
+            ),
+            version=current.version + 1,
+            updated_at=self._clock(),
+        )
+        await self._store.transition_recovery_debt_snapshot(
+            current.version,
+            stopped,
+        )
+        return stopped

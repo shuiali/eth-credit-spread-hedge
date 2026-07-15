@@ -253,3 +253,38 @@ def test_soft_pause_blocks_recovery_without_allocating_debt(tmp_path: Path) -> N
     assert submission.plan.locked_action is None
     assert exchange.requests == []
     assert asyncio.run(store.load_recovery_debt_snapshot(1)) == original
+
+
+def test_recovery_stop_releases_allocation_and_adds_actual_debt(
+    tmp_path: Path,
+) -> None:
+    service, _, store = make_service(tmp_path)
+    asyncio.run(
+        service.record_confirmed_stop_debt(
+            level_id=1,
+            actual_stop_debt=Decimal("0.0338"),
+            projected_debt=Decimal("5"),
+        )
+    )
+    asyncio.run(
+        service.submit_recovery(
+            level=level(),
+            instrument=instrument(),
+            risk_state=risk_state(),
+            limits=limits(),
+            order_link_id=RECOVERY_ID,
+        )
+    )
+
+    stopped = asyncio.run(
+        service.record_recovery_stop_debt(
+            level_id=1,
+            actual_stop_debt=Decimal("0.012"),
+            projected_debt=Decimal("0.02"),
+        )
+    )
+
+    assert stopped.debt.projected_debt == Decimal("0.02")
+    assert stopped.debt.confirmed_debt == Decimal("0.0458")
+    assert stopped.debt.allocated_debt == Decimal("0")
+    assert stopped.debt.remaining_debt == Decimal("0.0458")

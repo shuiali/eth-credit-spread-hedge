@@ -189,15 +189,17 @@ def _shadow_levels(
     reference_price: Decimal,
 ) -> tuple[HedgeLevel, ...]:
     tick = instrument.price_filter.tick_size
-    tp_distance = Decimal("5")
+    delta_step = tick * Decimal("10")
     quantity = Decimal("0.10")
     levels = tuple(
         HedgeLevel(
             level_id=index,
-            entry_price=reference_price - tick * index,
-            tp_price=reference_price - tick * index - tp_distance,
-            stop_price=(reference_price - tick * index) * Decimal("1.0015"),
-            option_budget=quantity * tp_distance,
+            entry_price=reference_price - delta_step * index,
+            tp_price=reference_price - delta_step * (index + 1),
+            stop_price=reference_price
+            - delta_step * index
+            + delta_step * Decimal("0.15"),
+            option_budget=quantity * delta_step,
         )
         for index in range(1, 21)
     )

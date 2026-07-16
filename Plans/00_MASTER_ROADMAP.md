@@ -48,7 +48,7 @@ Locked baseline configuration:
 ```text
 RecoveryMode.FULL_NEXT_TP
 LockPolicy.UNHEDGED
-stop_rate = 0.0015
+stop_rate = 0.15 of one delta step
 ```
 
 ## 3. Target architecture
@@ -186,7 +186,7 @@ Core checks:
 python -m compileall src tests
 pytest -q
 ruff check .
-mypy src
+mypy
 ```
 
 ## 7. Definition of complete
@@ -217,3 +217,4 @@ The system is complete only when:
 6. `06_BACKTEST_FAULT_TESTING_AND_VALIDATION_PLAN.md`
 7. `07_DEPLOYMENT_OPERATIONS_AND_ACCEPTANCE_PLAN.md`
 8. `08_MASTER_CHECKLIST.md`
+9. `09_INTEGRATED_DEMO_STRATEGY_RUNTIME_PLAN_REVISED.md`

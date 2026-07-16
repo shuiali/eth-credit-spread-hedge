@@ -10,7 +10,7 @@ from eth_credit_hedge.core.ledger import LedgerEventType
 
 def make_engine() -> HedgeEngine:
     return HedgeEngine(
-        CreditSpread("3010", "3000", "2980", "1", "15"),
+        CreditSpread("3010", "3000", "2980", "1", "10"),
         level_count=1,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
     )
@@ -32,9 +32,9 @@ def test_breakeven_at_exact_entry_then_immediate_fall_reenters() -> None:
         [
             "3010",
             "3000",
-            "3004.5",
+            "3003",
             "3000",
-            "3004.5",
+            "3003",
             "3000",
             "2999",
             "3000",
@@ -54,9 +54,9 @@ def test_floor_hedge_repeated_entry_oscillation_adds_no_stop_debt() -> None:
         [
             "3010",
             "3000",
-            "3004.5",
+            "3003",
             "3000",
-            "3004.5",
+            "3003",
             "3000",
             "2999",
             "3000",
@@ -68,5 +68,5 @@ def test_floor_hedge_repeated_entry_oscillation_adds_no_stop_debt() -> None:
 
     assert result.metrics.floor_entry_count == 3
     assert result.metrics.breakeven_exit_count == 2
-    assert result.metrics.premium_budget_consumed == Decimal("10.01250000")
-    assert result.metrics.outstanding_recovery_debt == Decimal("10.01250000")
+    assert result.metrics.premium_budget_consumed == Decimal("6.4500")
+    assert result.metrics.outstanding_recovery_debt == Decimal("6.4500")

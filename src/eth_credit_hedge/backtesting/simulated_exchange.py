@@ -318,6 +318,7 @@ class SimulatedExchange:
         self._duplicate_event_count = 0
         self._private_connected = True
         self._public_connected = True
+        self._public_generation = 1
         self._public_disconnected_since_ms: int | None = None
         self._maximum_stale_duration_ms = 0
         self._public_disconnect_count = 0
@@ -410,6 +411,7 @@ class SimulatedExchange:
         if connected:
             self._maximum_stale_duration_ms = self._current_maximum_stale_duration()
             self._public_disconnected_since_ms = None
+            self._public_generation += 1
         else:
             self._public_disconnected_since_ms = self._now_ms
             self._public_disconnect_count += 1
@@ -677,7 +679,7 @@ class SimulatedExchange:
             update_id=self._market_sequence,
             sequence=self._market_sequence,
             timestamp_utc=self._timestamp(),
-            connection_generation=1,
+            connection_generation=self._public_generation,
             raw_payload_hash=self._market_hash("book"),
         )
 
@@ -964,7 +966,7 @@ class SimulatedExchange:
             bid_price=bid,
             ask_price=ask,
             sequence=self._market_sequence,
-            connection_generation=1,
+            connection_generation=self._public_generation,
             raw_payload_hash=digest,
         )
         trade = TradeEvent(
@@ -975,7 +977,7 @@ class SimulatedExchange:
             side="Sell",
             trade_id=f"SIM-TRADE-{self._market_sequence:06d}",
             sequence=self._market_sequence,
-            connection_generation=1,
+            connection_generation=self._public_generation,
             raw_payload_hash=digest,
         )
         book = OrderBookSnapshot(
@@ -985,7 +987,7 @@ class SimulatedExchange:
             update_id=self._market_sequence,
             sequence=self._market_sequence,
             timestamp_utc=timestamp,
-            connection_generation=1,
+            connection_generation=self._public_generation,
             raw_payload_hash=digest,
         )
         self._ticker_queue.put_nowait(ticker)

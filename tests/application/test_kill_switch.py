@@ -119,10 +119,7 @@ def test_strategy_close_cancels_entries_closes_both_assets_and_verifies(tmp_path
     result = asyncio.run(service.close(reason="risk review", requested_by="operator"))
 
     assert result.verified_closed
-    assert trading.calls == [
-        ("cancel", "linear", "ETHUSDT"),
-        ("cancel", "option", None),
-    ]
+    assert trading.calls == []
     assert operations.calls == [
         "close_hedges",
         "close_option_spread",

@@ -38,6 +38,7 @@ class OptionEntryPolicy:
     allow_partial_spread: bool
     minimum_matched_quantity: Decimal
     maximum_credit_deviation: Decimal
+    minimum_net_credit: Decimal = ZERO
     unmatched_long_policy: UnmatchedLongPolicy = UnmatchedLongPolicy.CLOSE
 
     def __post_init__(self) -> None:
@@ -50,18 +51,25 @@ class OptionEntryPolicy:
             self.maximum_credit_deviation,
             "maximum credit deviation",
         )
+        minimum_net_credit = _decimal(
+            self.minimum_net_credit,
+            "minimum net credit",
+        )
         if max_wait <= ZERO:
             raise ValueError("max leg wait seconds must be positive")
         if minimum_quantity <= ZERO:
             raise ValueError("minimum matched quantity must be positive")
         if maximum_deviation < ZERO:
             raise ValueError("maximum credit deviation cannot be negative")
+        if minimum_net_credit < ZERO:
+            raise ValueError("minimum net credit cannot be negative")
         if not isinstance(self.allow_partial_spread, bool):
             raise ValueError("allow partial spread must be boolean")
 
         object.__setattr__(self, "max_leg_wait_seconds", max_wait)
         object.__setattr__(self, "minimum_matched_quantity", minimum_quantity)
         object.__setattr__(self, "maximum_credit_deviation", maximum_deviation)
+        object.__setattr__(self, "minimum_net_credit", minimum_net_credit)
         object.__setattr__(
             self,
             "unmatched_long_policy",

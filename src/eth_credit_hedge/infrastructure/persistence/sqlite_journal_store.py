@@ -63,6 +63,9 @@ class SqliteJournalStore:
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
 
+    async def schema_version(self) -> int:
+        return await asyncio.to_thread(self._schema_version)
+
     async def append_event(
         self,
         event: PendingJournalEvent,
@@ -101,6 +104,15 @@ class SqliteJournalStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_MIGRATION)
+
+    def _schema_version(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(version) AS version FROM schema_migrations"
+            ).fetchone()
+        if row is None or row["version"] is None:
+            return 0
+        return int(row["version"])
 
     def _append_event(self, event: PendingJournalEvent) -> JournalEvent:
         try:

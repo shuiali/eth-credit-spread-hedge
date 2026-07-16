@@ -157,9 +157,31 @@ Check an item only when implementation, tests and acceptance criteria pass.
 - [x] Automatic one-level demo passed.
 - [x] Restart demo passed.
 - [x] Multiple levels passed.
-- [ ] Recovery passed.
-- [ ] Mainnet shadow passed.
+- [x] Recovery passed.
+- [x] Mainnet shadow passed.
 - [ ] Finite limits approved.
 - [ ] Pilot config approved.
 - [ ] Legal/account eligibility confirmed.
 - [x] No zero-loss guarantee represented.
+
+## Integrated demo runtime
+
+- [ ] One command runs the complete approved strategy on Bybit demo.
+- [x] A non-mutating `preflight` command proves the exact demo capability set.
+- [x] Demo uses REST mutations, private demo streams, and mainnet public streams.
+- [x] WebSocket order entry is rejected for demo.
+- [x] Exact option symbols and execution bounds are required for a new cycle.
+- [x] Internal lots reconcile correctly to the aggregate ETHUSDT exchange position.
+- [x] A command-level simulated-exchange test proves the complete composition root.
+- [x] Mainnet remains a separate disabled runner until production approvals exist.
+- [x] The command is bounded, explicitly mutation-gated, and demo-host sealed.
+- [x] Option spread open and close both use confirmed actual fills.
+- [x] All configured virtual levels participate in ordered live crossings.
+- [x] Multiple baseline levels and same-level recovery share one durable state.
+- [x] Every active hedge has confirmed exchange-hosted protection.
+- [x] Private reconnect and restart require reconciliation before new entries.
+- [x] Risk state is authoritative rather than staged/test constants.
+- [x] Kill switches, health, metrics, logs, and alerts are live-wired.
+- [x] Timeout, `Ctrl+C`, and failure close and reconcile the whole strategy.
+- [x] Simulated runtime fault acceptance passes.
+- [ ] Bounded Bybit demo acceptance passes and is documented.

@@ -5,8 +5,8 @@ private_websocket_url = "wss://stream-demo.bybit.com/v5/private"
 credential_key_env = "BYBIT_API_KEY_DEMO"
 credential_secret_env = "BYBIT_API_SECRET_DEMO"
 external_order_mutations_enabled = true
-required_execution_schema_version = 5
-required_journal_schema_version = 1
+required_execution_schema_version = 6
+required_journal_schema_version = 3
 maximum_clock_drift_ms = 500
 maximum_market_data_age_ms = 1000
 

@@ -31,16 +31,16 @@ def test_entry_then_tp_reconciles_exactly() -> None:
 
 def test_entry_then_stop_reconciles_exactly() -> None:
     engine = make_engine()
-    events = engine.run(["3010", "3000", "3004.50"])
+    events = engine.run(["3010", "3000", "3003"])
     level = engine.levels[0]
 
     assert [(event.event_type, event.price) for event in events] == [
         (LedgerEventType.ENTRY, Decimal("3000")),
-        (LedgerEventType.STOP, Decimal("3004.5000")),
+        (LedgerEventType.STOP, Decimal("3003.00")),
     ]
     assert events[1].quantity == Decimal("1")
-    assert events[1].realized_pnl == Decimal("-4.5000")
-    assert engine.ledger.realized_hedge_pnl == Decimal("-4.5000")
-    assert level.realized_stop_losses == Decimal("4.5000")
+    assert events[1].realized_pnl == Decimal("-3.00")
+    assert engine.ledger.realized_hedge_pnl == Decimal("-3.00")
+    assert level.realized_stop_losses == Decimal("3.00")
     assert level.active_quantity == Decimal("0")
     assert level.state is LevelState.READY

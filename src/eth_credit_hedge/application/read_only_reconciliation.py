@@ -120,25 +120,25 @@ class BybitPrivateStateReader:
 
     async def capture(self) -> PrivateAccountSnapshot:
         linear_open_task = asyncio.create_task(
-            self.trading.get_open_orders("linear", "ETHUSDT")
+            self.trading.get_open_orders("linear")
         )
         option_open_task = asyncio.create_task(
             self.trading.get_open_orders("option")
         )
         linear_history_task = asyncio.create_task(
-            self.trading.get_order_history("linear", "ETHUSDT")
+            self.trading.get_order_history("linear")
         )
         option_history_task = asyncio.create_task(
             self.trading.get_order_history("option")
         )
         linear_execution_task = asyncio.create_task(
-            self.trading.get_execution_history("linear", "ETHUSDT")
+            self.trading.get_execution_history("linear")
         )
         option_execution_task = asyncio.create_task(
             self.trading.get_execution_history("option")
         )
         linear_position_task = asyncio.create_task(
-            self.account.get_positions("linear", "ETHUSDT")
+            self.account.get_positions("linear")
         )
         option_position_task = asyncio.create_task(
             self.account.get_positions("option")

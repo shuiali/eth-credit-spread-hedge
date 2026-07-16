@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -101,6 +101,9 @@ class SameLevelRecoveryService:
         risk_state: RiskState,
         limits: RiskLimits,
         order_link_id: str,
+        before_persisted_submission: (
+            Callable[[RecoveryEntryPlan], Awaitable[None]] | None
+        ) = None,
     ) -> RecoverySubmission:
         debt_snapshot = await self._store.load_recovery_debt_snapshot(
             level.level_id
@@ -129,6 +132,9 @@ class SameLevelRecoveryService:
             )
         if not plan.approved or plan.quantity is None:
             return RecoverySubmission(plan, None, debt_snapshot)
+
+        if before_persisted_submission is not None:
+            await before_persisted_submission(plan)
 
         request = PlaceOrderRequest(
             category="linear",

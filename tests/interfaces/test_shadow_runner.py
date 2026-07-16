@@ -23,6 +23,7 @@ from eth_credit_hedge.infrastructure.recording.shadow_jsonl import (
     JsonLinesShadowObservationRecorder,
     load_shadow_observations,
 )
+from eth_credit_hedge.interfaces.mainnet_shadow_runner import _shadow_levels
 from eth_credit_hedge.interfaces.shadow_runner import ShadowRunner, digest_shadow_intents
 
 
@@ -58,7 +59,7 @@ def service() -> ShadowModeService:
                 level_id=1,
                 entry_price=Decimal("3000"),
                 tp_price=Decimal("2900"),
-                stop_price=Decimal("3004.5"),
+                stop_price=Decimal("3015"),
                 option_budget=Decimal("1"),
             ),
         ),
@@ -86,6 +87,14 @@ def state() -> RiskState:
         market_data_fresh=True,
         reconciliation_succeeded=True,
     )
+
+
+def test_mainnet_shadow_levels_link_entry_tp_and_stop_to_one_delta() -> None:
+    levels = _shadow_levels(instrument(), Decimal("3000"))
+
+    for current, following in zip(levels, levels[1:]):
+        assert current.entry_price - following.entry_price == current.tp_distance
+        assert current.stop_distance == current.tp_distance * Decimal("0.15")
 
 
 def trade(price: str, sequence: int) -> TradeEvent:

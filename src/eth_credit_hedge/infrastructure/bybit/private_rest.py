@@ -33,7 +33,11 @@ from eth_credit_hedge.domain.execution import (
     WalletState,
 )
 from eth_credit_hedge.infrastructure.bybit.auth import BybitV5Signer
-from eth_credit_hedge.infrastructure.bybit.clock import ClockSyncSample, ServerClock
+from eth_credit_hedge.infrastructure.bybit.clock import (
+    BybitClockError,
+    ClockSyncSample,
+    ServerClock,
+)
 from eth_credit_hedge.infrastructure.bybit.environment import BybitDemoProfile
 from eth_credit_hedge.infrastructure.bybit.error_mapping import (
     BybitApiError,
@@ -100,23 +104,31 @@ class BybitPrivateRestClient:
         self._timeout_seconds = timeout_seconds
         self._requester = requester or self._http_request
         self._wall_time_ms = wall_time_ms or _wall_time_ms
+        self._clock_refresh_lock = asyncio.Lock()
 
     async def synchronize_clock(self) -> ClockSyncSample:
         """Measure and record demo REST server time using the local midpoint."""
-        request_sent_at_ms = self._wall_time_ms()
-        response = await self._send(
-            PreparedBybitRequest(
-                method="GET",
-                url=f"{self._profile.rest_base_url}/v5/market/time",
-                headers={"User-Agent": "eth-credit-spread-hedge/0.1"},
+        for attempt in range(3):
+            request_sent_at_ms = self._wall_time_ms()
+            response = await self._send(
+                PreparedBybitRequest(
+                    method="GET",
+                    url=f"{self._profile.rest_base_url}/v5/market/time",
+                    headers={"User-Agent": "eth-credit-spread-hedge/0.1"},
+                )
             )
-        )
-        response_received_at_ms = self._wall_time_ms()
-        return self._clock.record_sample(
-            request_sent_at_ms=request_sent_at_ms,
-            response_received_at_ms=response_received_at_ms,
-            server_time_ms=_response_time_ms(response),
-        )
+            response_received_at_ms = self._wall_time_ms()
+            try:
+                return self._clock.record_sample(
+                    request_sent_at_ms=request_sent_at_ms,
+                    response_received_at_ms=response_received_at_ms,
+                    server_time_ms=_response_time_ms(response),
+                )
+            except BybitClockError:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0.25)
+        raise AssertionError("clock synchronization attempts were exhausted")
 
     async def place_order(self, request: PlaceOrderRequest) -> OrderRequestAck:
         payload: JsonObject = {
@@ -269,6 +281,27 @@ class BybitPrivateRestClient:
                 "order link ID",
             )
         responses = await self._get_all_pages("/v5/execution/list", params)
+        if (
+            order_link_id is not None
+            and symbol is not None
+            and not any(_result_items(response) for response in responses)
+        ):
+            order = await self.get_order_by_link_id(
+                normalized_category,
+                symbol,
+                order_link_id,
+            )
+            if (
+                order is not None
+                and order.cumulative_filled_quantity > Decimal("0")
+            ):
+                responses = await self._get_all_pages(
+                    "/v5/execution/list",
+                    {
+                        "category": normalized_category,
+                        "orderId": order.order_id,
+                    },
+                )
         return tuple(
             _parse_execution(item)
             for response in responses
@@ -343,6 +376,7 @@ class BybitPrivateRestClient:
         endpoint: str,
         params: Mapping[str, str],
     ) -> JsonObject:
+        await self._refresh_clock_if_needed()
         query_string = urllib.parse.urlencode(list(params.items()))
         timestamp_ms = self._clock.timestamp_ms()
         signed_headers = self._signer.sign_get(
@@ -365,6 +399,7 @@ class BybitPrivateRestClient:
         operation: str,
         order_link_id: str | None,
     ) -> JsonObject:
+        await self._refresh_clock_if_needed()
         body = json.dumps(
             dict(payload),
             separators=(",", ":"),
@@ -395,6 +430,13 @@ class BybitPrivateRestClient:
                 order_link_id=order_link_id,
                 operation=operation,
             ) from exc
+
+    async def _refresh_clock_if_needed(self) -> None:
+        if not self._clock.needs_refresh():
+            return
+        async with self._clock_refresh_lock:
+            if self._clock.needs_refresh():
+                await self.synchronize_clock()
 
     async def _send(self, request: PreparedBybitRequest) -> JsonObject:
         response = await asyncio.to_thread(self._requester, request)
@@ -670,6 +712,11 @@ def _category_symbol_params(
     params: dict[str, str] = {"category": category}
     if symbol is not None:
         params["symbol"] = _required_argument(symbol, "symbol")
+    elif category == "linear":
+        # Bybit requires a scope when no linear symbol is supplied. Account-wide
+        # reconciliation must include every USDT-settled order and position, not
+        # only ETHUSDT.
+        params["settleCoin"] = "USDT"
     return params
 
 

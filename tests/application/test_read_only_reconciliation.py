@@ -135,13 +135,13 @@ def test_reader_captures_all_private_state_needed_before_reconciliation() -> Non
     assert snapshot.positions == (exchange_position(),)
     assert snapshot.wallet.account_type == "UNIFIED"
     assert set(adapter.calls) == {
-        ("open_orders", "linear", "ETHUSDT"),
+        ("open_orders", "linear", None),
         ("open_orders", "option", None),
-        ("order_history", "linear", "ETHUSDT"),
+        ("order_history", "linear", None),
         ("order_history", "option", None),
-        ("executions", "linear", "ETHUSDT"),
+        ("executions", "linear", None),
         ("executions", "option", None),
-        ("positions", "linear", "ETHUSDT"),
+        ("positions", "linear", None),
         ("positions", "option", None),
         ("wallet", "UNIFIED", None),
     }

@@ -6,7 +6,7 @@ hedge before exchange execution is introduced. The reference configuration is:
 ```text
 RecoveryMode.FULL_NEXT_TP
 LockPolicy.UNHEDGED
-stop_rate = 0.0015
+stop_rate = 0.15 of one delta step
 ```
 
 All monetary, price, and quantity calculations use `Decimal`.
@@ -35,7 +35,8 @@ zone_width    = (K_short - K_long) / N
 entry_i       = K_short - (i - 1) * zone_width
 tp_i          = K_short - i * zone_width
 option_budget = q * (entry_i - tp_i)
-stop_i        = entry_i * (1 + 0.0015)
+delta_i       = entry_i - tp_i
+stop_i        = entry_i + 0.15 * delta_i
 ```
 
 No virtual level exists below the long-put strike.
@@ -87,4 +88,3 @@ This premium budget limits modeled fixed-stop losses only. It does **not**
 guarantee nonnegative combined P&L, especially after a level locks and option
 loss remains unhedged. Fees, slippage, funding, gaps, partial fills, and live
 exchange behavior are outside this frozen deterministic baseline.
-

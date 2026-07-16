@@ -41,7 +41,7 @@ class HedgeEngine:
         recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
         recovery_tp_count: int = 3,
         lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
-        stop_rate: DecimalLike = "0.0015",
+        stop_rate: DecimalLike = "0.15",
     ) -> None:
         self.config = StrategyConfig(
             level_count=level_count,

@@ -10,20 +10,29 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from eth_credit_hedge.domain.operations import OperationalSnapshot
+from eth_credit_hedge.infrastructure.monitoring.metrics import render_prometheus
 
 
 @dataclass(frozen=True, slots=True)
 class HealthResponse:
     status_code: int
-    payload: dict[str, object]
+    payload: dict[str, object] | str
+    content_type: str = "application/json"
 
     def to_json_bytes(self) -> bytes:
+        if not isinstance(self.payload, dict):
+            raise TypeError("response payload is not JSON")
         return json.dumps(
             self.payload,
             allow_nan=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode()
+
+    def to_bytes(self) -> bytes:
+        if isinstance(self.payload, str):
+            return self.payload.encode()
+        return self.to_json_bytes()
 
 
 class HealthApi:
@@ -81,6 +90,12 @@ class HealthApi:
                     "last_risk_reasons": list(snapshot.last_risk_reasons),
                 },
             )
+        if path == "/metrics":
+            return HealthResponse(
+                200,
+                render_prometheus(snapshot),
+                "text/plain; version=0.0.4; charset=utf-8",
+            )
         return HealthResponse(404, {"error": "not found"})
 
 
@@ -95,9 +110,9 @@ def create_health_server(
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             response = api.handle_get(urlsplit(self.path).path)
-            body = response.to_json_bytes()
+            body = response.to_bytes()
             self.send_response(response.status_code)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

@@ -32,13 +32,16 @@ def parse_order_message(message: dict[str, Any]) -> OrderUpdateBatch:
             status=_required_text(item, "orderStatus"),
             side=_side(item.get("side")),
             order_type=_order_type(item.get("orderType")),
-            price=_optional_decimal(item.get("price"), "price"),
+            price=_optional_positive_decimal(item.get("price"), "price"),
             quantity=_required_decimal(item, "qty"),
             cumulative_filled_quantity=_decimal_or_zero(
                 item.get("cumExecQty"),
                 "cumulative executed quantity",
             ),
-            average_price=_optional_decimal(item.get("avgPrice"), "average price"),
+            average_price=_optional_positive_decimal(
+                item.get("avgPrice"),
+                "average price",
+            ),
             updated_at=_item_time(item, received_at),
         )
         for item in _message_items(message)
@@ -89,7 +92,7 @@ def parse_position_message(
             symbol=_required_text(item, "symbol"),
             side=_position_side(item.get("side")),
             quantity=_required_decimal(item, "size"),
-            average_price=_optional_decimal(item.get("entryPrice"), "entry price"),
+            average_price=_position_average_price(item),
             mark_price=_optional_decimal(item.get("markPrice"), "mark price"),
             liquidation_price=_optional_positive_decimal(
                 item.get("liqPrice"),
@@ -237,6 +240,13 @@ def _optional_decimal(value: object, field_name: str) -> Decimal | None:
     if not parsed.is_finite():
         raise ValueError(f"Bybit {field_name} must be a finite decimal")
     return parsed
+
+
+def _position_average_price(item: dict[str, Any]) -> Decimal | None:
+    average_price = _optional_decimal(item.get("entryPrice"), "entry price")
+    if average_price == Decimal("0") and _required_decimal(item, "size") == Decimal("0"):
+        return None
+    return average_price
 
 
 def _optional_positive_decimal(

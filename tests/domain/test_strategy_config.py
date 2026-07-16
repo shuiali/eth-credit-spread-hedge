@@ -19,7 +19,7 @@ def test_baseline_factory_freezes_validated_strategy_defaults() -> None:
 
     assert config == StrategyConfig(
         level_count=5,
-        stop_rate=Decimal("0.0015"),
+        stop_rate=Decimal("0.15"),
         recovery_mode=RecoveryMode.FULL_NEXT_TP,
         lock_policy=LockPolicy.UNHEDGED,
         recovery_tp_count=3,
@@ -48,7 +48,7 @@ def test_strategy_config_rejects_invalid_values(
 ) -> None:
     values: dict[str, object] = {
         "level_count": 1,
-        "stop_rate": "0.0015",
+        "stop_rate": "0.15",
         "recovery_mode": RecoveryMode.FULL_NEXT_TP,
         "lock_policy": LockPolicy.UNHEDGED,
         "recovery_tp_count": 3,
@@ -79,7 +79,7 @@ def test_runtime_config_parses_environment_mapping_once() -> None:
         {
             "ETH_HEDGE_ENVIRONMENT": "demo",
             "ETH_HEDGE_LEVEL_COUNT": "4",
-            "ETH_HEDGE_STOP_RATE": "0.0015",
+            "ETH_HEDGE_STOP_RATE": "0.15",
             "ETH_HEDGE_RECOVERY_MODE": "FULL_NEXT_TP",
             "ETH_HEDGE_LOCK_POLICY": "UNHEDGED",
             "ETH_HEDGE_RECOVERY_TP_COUNT": "3",

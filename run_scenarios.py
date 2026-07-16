@@ -107,11 +107,11 @@ def _entry(
     projected: str | None = None,
 ) -> ExpectedEvent:
     base_projected = {
-        1: "4.5",
-        2: "4.47",
-        3: "4.44",
-        4: "4.41",
-        5: "4.38",
+        1: "3",
+        2: "3",
+        3: "3",
+        4: "3",
+        5: "3",
     }[level]
     return _event(
         tick,
@@ -167,17 +167,17 @@ def _full_decline_events(tick: int = 1) -> tuple[ExpectedEvent, ...]:
 
 def named_scenarios() -> tuple[Scenario, ...]:
     first_entry = _entry(1, 1, "3000")
-    first_stop = _event(2, "STOP", 1, "3004.5", "1", "-4.5", "READY", 1)
-    recovery_entry = _entry(3, 1, "3000", "1.225", 2, "5.5125")
+    first_stop = _event(2, "STOP", 1, "3003", "1", "-3", "READY", 1)
+    recovery_entry = _entry(3, 1, "3000", "1.15", 2, "3.45")
     recovery_tp = _tp(
         4,
         1,
         "2980",
-        "1.225",
-        "24.5",
+        "1.15",
+        "23",
         2,
-        "4.5",
-        ((1, "4.5"),),
+        "3",
+        ((1, "3"),),
     )
 
     return (
@@ -193,9 +193,9 @@ def named_scenarios() -> tuple[Scenario, ...]:
         ),
         Scenario(
             name="entry_immediate_stop",
-            prices=("3010", "3000", "3004.5"),
+            prices=("3010", "3000", "3003"),
             expected_events=(first_entry, first_stop),
-            expected_combined_pnl="15.5",
+            expected_combined_pnl="17",
             expected_final_states=("READY",),
             premium_credit="20",
             long_put_strike="2980",
@@ -203,7 +203,7 @@ def named_scenarios() -> tuple[Scenario, ...]:
         ),
         Scenario(
             name="stop_reentry_recovery",
-            prices=("3010", "3000", "3004.5", "3000", "2980"),
+            prices=("3010", "3000", "3003", "3000", "2980"),
             expected_events=(first_entry, first_stop, recovery_entry, recovery_tp),
             expected_combined_pnl="20",
             expected_final_states=("PAID",),
@@ -213,15 +213,15 @@ def named_scenarios() -> tuple[Scenario, ...]:
         ),
         Scenario(
             name="two_stops_then_recovery",
-            prices=("3010", "3000", "3004.5", "3000", "3004.5", "3000", "2980"),
+            prices=("3010", "3000", "3003", "3000", "3003", "3000", "2980"),
             expected_events=(
                 first_entry,
                 first_stop,
                 recovery_entry,
-                _event(4, "STOP", 1, "3004.5", "1.225", "-5.5125", "READY", 2),
-                _entry(5, 1, "3000", "1.500625", 3, "6.7528125"),
+                _event(4, "STOP", 1, "3003", "1.15", "-3.45", "READY", 2),
+                _entry(5, 1, "3000", "1.3225", 3, "3.9675"),
                 _tp(
-                    6, 1, "2980", "1.500625", "30.0125", 3, "10.0125", ((1, "10.0125"),)
+                    6, 1, "2980", "1.3225", "26.45", 3, "6.45", ((1, "6.45"),)
                 ),
             ),
             expected_combined_pnl="20",
@@ -232,16 +232,16 @@ def named_scenarios() -> tuple[Scenario, ...]:
         ),
         Scenario(
             name="repeated_entry_oscillation",
-            prices=("3010", "3000", "3004.5", "3000", "3004.5", "3000", "3004.5"),
+            prices=("3010", "3000", "3003", "3000", "3003", "3000", "3003"),
             expected_events=(
                 first_entry,
                 first_stop,
                 recovery_entry,
-                _event(4, "STOP", 1, "3004.5", "1.225", "-5.5125", "READY", 2),
-                _entry(5, 1, "3000", "1.500625", 3, "6.7528125"),
-                _event(6, "STOP", 1, "3004.5", "1.500625", "-6.7528125", "READY", 3),
+                _event(4, "STOP", 1, "3003", "1.15", "-3.45", "READY", 2),
+                _entry(5, 1, "3000", "1.3225", 3, "3.9675"),
+                _event(6, "STOP", 1, "3003", "1.3225", "-3.9675", "READY", 3),
             ),
-            expected_combined_pnl="3.2346875",
+            expected_combined_pnl="9.5825",
             expected_final_states=("READY",),
             premium_credit="20",
             long_put_strike="2980",
@@ -256,9 +256,9 @@ def named_scenarios() -> tuple[Scenario, ...]:
                 _entry(1, 2, "2980"),
                 _tp(1, 2, "2960"),
                 _entry(1, 3, "2960"),
-                _event(2, "STOP", 3, "2964.44", "1", "-4.44", "READY", 1),
+                _event(2, "STOP", 3, "2963", "1", "-3", "READY", 1),
             ),
-            expected_combined_pnl="65.56",
+            expected_combined_pnl="67",
             expected_final_states=("PAID", "PAID", "READY", "READY", "READY"),
         ),
         Scenario(
@@ -281,27 +281,27 @@ def named_scenarios() -> tuple[Scenario, ...]:
         ),
         Scenario(
             name="stop_budget_exhaustion",
-            prices=("3010", "3000", "3004.5", "3000", "3004.5", "3000"),
+            prices=("3010", "3000", "3003", "3000", "3003", "3000"),
             expected_events=(
                 first_entry,
                 first_stop,
                 recovery_entry,
-                _event(4, "STOP", 1, "3004.5", "1.225", "-5.5125", "READY", 2),
+                _event(4, "STOP", 1, "3003", "1.15", "-3.45", "READY", 2),
                 _event(
                     5,
                     "LOCKED",
                     1,
                     "3000",
-                    "1.500625",
+                    "1.3225",
                     "0",
                     "LOCKED",
                     2,
-                    projected="6.7528125",
+                    projected="3.9675",
                 ),
             ),
-            expected_combined_pnl="4.9875",
+            expected_combined_pnl="3.55",
             expected_final_states=("LOCKED",),
-            premium_credit="15",
+            premium_credit="10",
             long_put_strike="2980",
             level_count=1,
         ),

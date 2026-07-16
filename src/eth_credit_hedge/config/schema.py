@@ -67,7 +67,7 @@ class StrategyConfig:
     ) -> StrategyConfig:
         return cls(
             level_count=level_count,
-            stop_rate=Decimal("0.0015"),
+            stop_rate=Decimal("0.15"),
             recovery_mode=RecoveryMode.FULL_NEXT_TP,
             lock_policy=LockPolicy.UNHEDGED,
             recovery_tp_count=recovery_tp_count,
@@ -82,7 +82,7 @@ class StrategyConfig:
     ) -> StrategyConfig:
         return cls(
             level_count=level_count,
-            stop_rate=Decimal("0.0015"),
+            stop_rate=Decimal("0.15"),
             recovery_mode=RecoveryMode.FULL_NEXT_TP,
             lock_policy=LockPolicy.BREAKEVEN_FLOOR,
             recovery_tp_count=recovery_tp_count,

@@ -421,10 +421,11 @@ def confirm_exit_reconciliation(
     updated_at: datetime,
 ) -> ProtectionSnapshot:
     if (
-        snapshot.state is not LiveExecutionState.CANCEL_PENDING
+        snapshot.state
+        not in (LiveExecutionState.CANCEL_PENDING, LiveExecutionState.RECONCILING)
         or snapshot.pending_terminal_state is None
     ):
-        raise ValueError("exit reconciliation requires CANCEL_PENDING state")
+        raise ValueError("exit reconciliation requires a pending terminal state")
     return replace(
         snapshot,
         state=snapshot.pending_terminal_state,

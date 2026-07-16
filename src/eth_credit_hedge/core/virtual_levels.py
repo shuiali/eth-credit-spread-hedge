@@ -56,9 +56,9 @@ class HedgeLevel:
 def generate_virtual_levels(
     spread: CreditSpread,
     level_count: int,
-    stop_rate: DecimalLike = "0.0015",
+    stop_rate: DecimalLike = "0.15",
 ) -> list[HedgeLevel]:
-    """Partition only the interval between the two put strikes."""
+    """Partition the spread with TP and stop distances linked to each step."""
     if level_count <= 0:
         raise ValueError("level count must be positive")
     rate = to_decimal(stop_rate)
@@ -77,13 +77,14 @@ def generate_virtual_levels(
     for index in range(level_count):
         entry_price = boundaries[index]
         tp_price = boundaries[index + 1]
+        delta_step = entry_price - tp_price
         levels.append(
             HedgeLevel(
                 level_id=index + 1,
                 entry_price=entry_price,
                 tp_price=tp_price,
-                stop_price=entry_price * (Decimal("1") + rate),
-                option_budget=spread.option_quantity * (entry_price - tp_price),
+                stop_price=entry_price + delta_step * rate,
+                option_budget=spread.option_quantity * delta_step,
             )
         )
     return levels

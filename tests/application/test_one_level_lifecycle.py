@@ -136,7 +136,7 @@ async def run_lifecycle(
             submitted,
             stop_order_link_id=STOP_ID,
             take_profit_order_link_id=TP_ID,
-            stop_rate=Decimal("0.01"),
+            stop_distance=Decimal("30"),
             take_profit_price=Decimal("2990"),
         )
     else:
@@ -144,7 +144,7 @@ async def run_lifecycle(
             request,
             stop_order_link_id=STOP_ID,
             take_profit_order_link_id=TP_ID,
-            stop_rate=Decimal("0.01"),
+            stop_distance=Decimal("30"),
             take_profit_price=Decimal("2990"),
             reference_price=Decimal("3000"),
         )

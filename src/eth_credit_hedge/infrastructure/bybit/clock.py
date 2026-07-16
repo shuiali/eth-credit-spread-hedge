@@ -80,6 +80,15 @@ class ServerClock:
     def sample(self) -> ClockSyncSample | None:
         return self._sample
 
+    def needs_refresh(self) -> bool:
+        """Return whether an existing sample has consumed half its safe age."""
+
+        sample = self._sample
+        if sample is None:
+            return False
+        age_seconds = self._monotonic_seconds() - sample.synchronized_at_monotonic
+        return age_seconds < 0 or age_seconds >= self.max_age_seconds / 2
+
     def record_sample(
         self,
         *,

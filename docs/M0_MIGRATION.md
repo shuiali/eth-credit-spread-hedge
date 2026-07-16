@@ -23,7 +23,7 @@ No manual `PYTHONPATH` setting is required.
 ## Configuration
 
 `StrategyConfig.baseline()` freezes `FULL_NEXT_TP`, `UNHEDGED`, and the
-`0.0015` stop rate. `StrategyConfig.experimental_floor()` is deliberately
+`0.15` stop-to-delta ratio. `StrategyConfig.experimental_floor()` is deliberately
 separate. `RuntimeConfig` rejects experimental recovery or lock policies for
 demo, shadow, and production environments.
 

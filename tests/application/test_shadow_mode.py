@@ -63,7 +63,7 @@ def level() -> HedgeLevel:
         level_id=1,
         entry_price=Decimal("3000"),
         tp_price=Decimal("2900"),
-        stop_price=Decimal("3004.5"),
+                stop_price=Decimal("3015"),
         option_budget=Decimal("1"),
     )
 
@@ -140,7 +140,7 @@ def test_shadow_crossing_records_complete_hypothetical_intent_without_order(
     assert intent.risk_reasons == ()
     assert intent.hypothetical_entry_price == Decimal("3000")
     assert intent.hypothetical_take_profit_price == Decimal("2900")
-    assert intent.hypothetical_stop_price == Decimal("3004.5")
+    assert intent.hypothetical_stop_price == Decimal("3015")
     assert intent.expected_tp_pnl == Decimal("1.000")
     assert "order_id" not in intent.to_dict()
     assert (tmp_path / "shadow.jsonl").read_text(encoding="utf-8").splitlines() == [

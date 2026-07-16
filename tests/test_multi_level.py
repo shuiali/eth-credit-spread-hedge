@@ -60,14 +60,14 @@ def test_single_segment_decline_hedges_the_entire_spread_loss() -> None:
 
 def test_recovery_debt_does_not_change_another_levels_quantity() -> None:
     engine = make_engine()
-    events = engine.run(["3010", "3000", "3004.50", "2950"])
+    events = engine.run(["3010", "3000", "3003", "2950"])
     entries = [event for event in events if event.event_type is LedgerEventType.ENTRY]
 
     assert [(event.level_id, event.quantity) for event in entries[:3]] == [
         (1, Decimal("1")),
-        (1, Decimal("1.2250")),
+        (1, Decimal("1.15")),
         (2, Decimal("1")),
     ]
-    assert engine.levels[0].stop_loss_history == [Decimal("4.5000")]
+    assert engine.levels[0].stop_loss_history == [Decimal("3.00")]
     assert engine.levels[1].stop_loss_history == []
     assert engine.levels[1].recovery_debt == Decimal("0")

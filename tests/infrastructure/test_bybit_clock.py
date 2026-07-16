@@ -97,6 +97,26 @@ def test_clock_rejects_stale_sync() -> None:
         clock.timestamp_ms()
 
 
+def test_clock_requests_refresh_halfway_to_stale() -> None:
+    fake_time = FakeTime(wall_time_ms=1_000_000, monotonic_seconds=10.0)
+    clock = ServerClock(
+        max_age_seconds=30,
+        wall_time_ms=fake_time.wall,
+        monotonic_seconds=fake_time.monotonic,
+    )
+
+    assert not clock.needs_refresh()
+    clock.record_sample(
+        request_sent_at_ms=999_990,
+        response_received_at_ms=1_000_010,
+        server_time_ms=1_000_000,
+    )
+    fake_time.monotonic_seconds = 24.999
+    assert not clock.needs_refresh()
+    fake_time.monotonic_seconds = 25.0
+    assert clock.needs_refresh()
+
+
 def test_clock_rejects_invalid_sample_order() -> None:
     clock = ServerClock()
 

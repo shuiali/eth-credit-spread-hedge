@@ -47,6 +47,7 @@ def test_live_ready_and_status_routes_have_stable_payloads() -> None:
     strategy = api.handle_get("/status/strategy")
     exchange = api.handle_get("/status/exchange")
     risk = api.handle_get("/status/risk")
+    metrics = api.handle_get("/metrics")
 
     assert live.status_code == 200
     assert live.payload == {"live": True}
@@ -55,6 +56,9 @@ def test_live_ready_and_status_routes_have_stable_payloads() -> None:
     assert strategy.payload["open_hedge_quantity"] == "0.01"
     assert exchange.payload["reconciliation_state"] == "MATCHED"
     assert risk.payload == {"risk_lock_active": False, "last_risk_reasons": []}
+    assert metrics.content_type.startswith("text/plain")
+    assert isinstance(metrics.payload, str)
+    assert "open_hedge_quantity 0.01" in metrics.payload
 
 
 @pytest.mark.parametrize(

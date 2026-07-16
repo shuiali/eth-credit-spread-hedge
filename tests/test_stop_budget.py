@@ -9,11 +9,11 @@ from eth_credit_hedge.core.virtual_levels import LevelState
 
 def test_locked_level_can_still_finish_below_zero_at_max_option_loss() -> None:
     result = HedgeEngine(
-        CreditSpread("3010", "3000", "2980", "1", "15"),
+        CreditSpread("3010", "3000", "2980", "1", "10"),
         level_count=1,
-    ).run_with_accounting(["3010", "3000", "3004.5", "3000", "3004.5", "3000", "2980"])
+    ).run_with_accounting(["3010", "3000", "3003", "3000", "3003", "3000", "2980"])
 
-    assert result.metrics.premium_budget_consumed == Decimal("10.01250000")
-    assert result.metrics.combined_pnl == Decimal("-15.01250000")
+    assert result.metrics.premium_budget_consumed == Decimal("6.4500")
+    assert result.metrics.combined_pnl == Decimal("-16.4500")
     assert result.metrics.floor_pass is False
     assert result.levels[0].state is LevelState.LOCKED

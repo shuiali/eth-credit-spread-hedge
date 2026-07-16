@@ -319,6 +319,82 @@ def test_server_clock_is_synchronized_from_an_unsigned_demo_time_request() -> No
     assert "X-BAPI-API-KEY" not in requester.requests[0].headers
 
 
+def test_server_clock_retries_a_transient_low_quality_sample() -> None:
+    requester = FakeRequester(
+        [
+            success_response(
+                {"timeSecond": str(NOW_MS // 1000), "timeNano": "0"}
+            ),
+            success_response(
+                {"timeSecond": str(NOW_MS // 1000), "timeNano": "0"}
+            ),
+        ]
+    )
+    wall_times = iter(
+        (
+            NOW_MS - 300,
+            NOW_MS + 300,
+            NOW_MS - 20,
+            NOW_MS + 20,
+        )
+    )
+    clock = ServerClock(
+        max_absolute_offset_ms=1000,
+        max_uncertainty_ms=250,
+        wall_time_ms=lambda: NOW_MS,
+        monotonic_seconds=lambda: 10.0,
+    )
+    rest = BybitPrivateRestClient(
+        profile=BybitDemoProfile(credentials()),
+        clock=clock,
+        requester=requester,
+        wall_time_ms=lambda: next(wall_times),
+    )
+
+    sample = asyncio.run(rest.synchronize_clock())
+
+    assert sample.uncertainty_ms == Decimal("20")
+    assert len(requester.requests) == 2
+
+
+def test_private_read_refreshes_clock_before_existing_sample_becomes_stale() -> None:
+    monotonic_seconds = 10.0
+    clock = ServerClock(
+        max_absolute_offset_ms=1000,
+        max_uncertainty_ms=100,
+        max_age_seconds=30,
+        wall_time_ms=lambda: NOW_MS,
+        monotonic_seconds=lambda: monotonic_seconds,
+    )
+    clock.record_sample(
+        request_sent_at_ms=NOW_MS - 10,
+        response_received_at_ms=NOW_MS + 10,
+        server_time_ms=NOW_MS,
+    )
+    monotonic_seconds = 25.0
+    requester = FakeRequester(
+        [
+            success_response(
+                {"timeSecond": str(NOW_MS // 1000), "timeNano": "0"}
+            ),
+            success_response(
+                {"category": "linear", "list": [], "nextPageCursor": ""}
+            ),
+        ]
+    )
+    rest = BybitPrivateRestClient(
+        profile=BybitDemoProfile(credentials()),
+        clock=clock,
+        requester=requester,
+        wall_time_ms=lambda: NOW_MS,
+    )
+
+    assert asyncio.run(rest.get_open_orders("linear", "ETHUSDT")) == ()
+
+    assert requester.requests[0].url.endswith("/v5/market/time")
+    assert "/v5/order/realtime?" in requester.requests[1].url
+
+
 def test_open_order_pagination_uses_the_exact_signed_query() -> None:
     requester = FakeRequester(
         [
@@ -353,6 +429,28 @@ def test_open_order_pagination_uses_the_exact_signed_query() -> None:
         )
         assert sent.headers == expected.as_http_headers()
     assert "cursor=cursor%3A2" in requester.requests[1].url
+
+
+def test_account_wide_linear_reads_use_usdt_settlement_scope() -> None:
+    requester = FakeRequester(
+        [
+            success_response(
+                {
+                    "category": "linear",
+                    "list": [order_item("sol-stop", "")],
+                    "nextPageCursor": "",
+                }
+            )
+        ]
+    )
+    rest = client(requester)
+
+    orders = asyncio.run(rest.get_open_orders("linear"))
+
+    assert len(orders) == 1
+    assert "category=linear" in requester.requests[0].url
+    assert "settleCoin=USDT" in requester.requests[0].url
+    assert "symbol=" not in requester.requests[0].url
 
 
 def test_conditional_order_query_preserves_trigger_contract() -> None:
@@ -420,6 +518,77 @@ def test_order_link_lookup_falls_back_to_durable_history() -> None:
         "/v5/order/realtime",
         "/v5/order/history",
     ]
+
+
+def test_execution_lookup_retries_filled_order_by_exchange_id() -> None:
+    option_symbol = "ETH-31JUL26-1950-P-USDT"
+    requester = FakeRequester(
+        [
+            success_response(
+                {
+                    "category": "option",
+                    "list": [],
+                    "nextPageCursor": "",
+                }
+            ),
+            success_response(
+                {
+                    "category": "option",
+                    "list": [
+                        {
+                            **order_item(
+                                "option-order-1",
+                                ORDER_LINK_ID,
+                                status="Filled",
+                            ),
+                            "category": "option",
+                            "symbol": option_symbol,
+                            "side": "Buy",
+                            "price": "80.9",
+                            "qty": "0.1",
+                            "cumExecQty": "0.1",
+                            "avgPrice": "80.9",
+                            "reduceOnly": True,
+                        }
+                    ],
+                    "nextPageCursor": "",
+                }
+            ),
+            success_response(
+                {
+                    "category": "option",
+                    "list": [
+                        {
+                            "symbol": option_symbol,
+                            "orderId": "option-order-1",
+                            "orderLinkId": ORDER_LINK_ID,
+                            "side": "Buy",
+                            "execId": "option-execution-1",
+                            "execPrice": "80.9",
+                            "execQty": "0.1",
+                            "execFee": "0.05",
+                            "isMaker": False,
+                            "execTime": "1658385579410",
+                        }
+                    ],
+                    "nextPageCursor": "",
+                }
+            ),
+        ]
+    )
+
+    executions = asyncio.run(
+        client(requester).get_execution_history(
+            "option",
+            option_symbol,
+            ORDER_LINK_ID,
+        )
+    )
+
+    assert executions[0].execution_id == "option-execution-1"
+    assert len(requester.requests) == 3
+    assert "orderLinkId=" in urlsplit(requester.requests[0].url).query
+    assert "orderId=option-order-1" in urlsplit(requester.requests[2].url).query
 
 
 def test_read_only_account_and_execution_responses_are_normalized() -> None:

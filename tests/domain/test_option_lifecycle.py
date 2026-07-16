@@ -136,6 +136,7 @@ def test_entry_policy_applies_partial_quantity_and_credit_deviation_limits() -> 
         ("max_leg_wait_seconds", "0"),
         ("minimum_matched_quantity", "0"),
         ("maximum_credit_deviation", "-0.01"),
+        ("minimum_net_credit", "-0.01"),
     ],
 )
 def test_entry_policy_rejects_invalid_limits(field: str, value: str) -> None:
@@ -144,6 +145,7 @@ def test_entry_policy_rejects_invalid_limits(field: str, value: str) -> None:
         "allow_partial_spread": True,
         "minimum_matched_quantity": Decimal("0.25"),
         "maximum_credit_deviation": Decimal("2"),
+        "minimum_net_credit": Decimal("0"),
     }
     values[field] = Decimal(value)
 

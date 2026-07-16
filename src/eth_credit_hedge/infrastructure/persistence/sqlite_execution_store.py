@@ -27,6 +27,10 @@ from eth_credit_hedge.domain.live_option_execution import (
     OptionSpreadExecutionSnapshot,
 )
 from eth_credit_hedge.domain.option_position import OptionPositionState
+from eth_credit_hedge.domain.option_exit import (
+    OptionExitState,
+    OptionSpreadExitSnapshot,
+)
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 from eth_credit_hedge.domain.live_recovery import (
     RecoveryDebtSnapshot,
@@ -132,6 +136,18 @@ CREATE TABLE IF NOT EXISTS recovery_debts (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS option_exit_snapshots (
+    cycle_id TEXT PRIMARY KEY,
+    short_symbol TEXT NOT NULL,
+    long_symbol TEXT NOT NULL,
+    state TEXT NOT NULL,
+    short_remaining_quantity TEXT NOT NULL,
+    long_remaining_quantity TEXT NOT NULL,
+    active_order_link_id TEXT,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
@@ -143,6 +159,9 @@ VALUES (4, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (5, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (6, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -156,6 +175,9 @@ class SqliteExecutionStore:
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
+
+    async def schema_version(self) -> int:
+        return await asyncio.to_thread(self._schema_version)
 
     async def persist_option_long_intent(
         self,
@@ -491,6 +513,29 @@ class SqliteExecutionStore:
             snapshot,
         )
 
+    async def persist_option_exit_snapshot(
+        self,
+        snapshot: OptionSpreadExitSnapshot,
+    ) -> None:
+        await asyncio.to_thread(self._persist_option_exit_snapshot, snapshot)
+
+    async def load_option_exit_snapshot(
+        self,
+        cycle_id: str,
+    ) -> OptionSpreadExitSnapshot | None:
+        return await asyncio.to_thread(self._load_option_exit_snapshot, cycle_id)
+
+    async def transition_option_exit_snapshot(
+        self,
+        previous_version: int,
+        snapshot: OptionSpreadExitSnapshot,
+    ) -> None:
+        await asyncio.to_thread(
+            self._transition_option_exit_snapshot,
+            previous_version,
+            snapshot,
+        )
+
     async def execution_count(self) -> int:
         return await asyncio.to_thread(self._execution_count)
 
@@ -498,6 +543,15 @@ class SqliteExecutionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_MIGRATION)
+
+    def _schema_version(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(version) AS version FROM schema_migrations"
+            ).fetchone()
+        if row is None or row["version"] is None:
+            return 0
+        return int(row["version"])
 
     def _persist_option_long_intent(
         self,
@@ -1024,6 +1078,71 @@ class SqliteExecutionStore:
                     "recovery debt version changed before transaction commit"
                 )
 
+    def _persist_option_exit_snapshot(
+        self,
+        snapshot: OptionSpreadExitSnapshot,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO option_exit_snapshots(
+                        cycle_id, short_symbol, long_symbol, state,
+                        short_remaining_quantity, long_remaining_quantity,
+                        active_order_link_id, version, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    _option_exit_values(snapshot),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("option exit snapshot already exists") from exc
+
+    def _load_option_exit_snapshot(
+        self,
+        cycle_id: str,
+    ) -> OptionSpreadExitSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM option_exit_snapshots WHERE cycle_id = ?",
+                (cycle_id,),
+            ).fetchone()
+        return None if row is None else _option_exit_snapshot_from_row(row)
+
+    def _transition_option_exit_snapshot(
+        self,
+        previous_version: int,
+        snapshot: OptionSpreadExitSnapshot,
+    ) -> None:
+        if snapshot.version != previous_version + 1:
+            raise ValueError("new option exit version must increment exactly once")
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE option_exit_snapshots SET
+                    short_symbol = ?, long_symbol = ?, state = ?,
+                    short_remaining_quantity = ?,
+                    long_remaining_quantity = ?, active_order_link_id = ?,
+                    version = ?, updated_at = ?
+                WHERE cycle_id = ? AND version = ?
+                """,
+                (
+                    snapshot.short_symbol,
+                    snapshot.long_symbol,
+                    snapshot.state.value,
+                    str(snapshot.short_remaining_quantity),
+                    str(snapshot.long_remaining_quantity),
+                    snapshot.active_order_link_id,
+                    snapshot.version,
+                    snapshot.updated_at.isoformat(),
+                    snapshot.cycle_id,
+                    previous_version,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ConcurrentSnapshotUpdateError(
+                    "option exit version changed before transaction commit"
+                )
+
     def _execution_count(self) -> int:
         with self._connect() as connection:
             row = connection.execute("SELECT COUNT(*) AS count FROM executions").fetchone()
@@ -1407,6 +1526,42 @@ def _snapshot_from_row(row: sqlite3.Row) -> EntryExecutionSnapshot:
         filled_quantity=Decimal(str(row["filled_quantity"])),
         entry_notional=Decimal(str(row["entry_notional"])),
         entry_fees=Decimal(str(row["entry_fees"])),
+        version=int(row["version"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
+
+
+def _option_exit_values(
+    snapshot: OptionSpreadExitSnapshot,
+) -> tuple[object, ...]:
+    return (
+        snapshot.cycle_id,
+        snapshot.short_symbol,
+        snapshot.long_symbol,
+        snapshot.state.value,
+        str(snapshot.short_remaining_quantity),
+        str(snapshot.long_remaining_quantity),
+        snapshot.active_order_link_id,
+        snapshot.version,
+        snapshot.updated_at.isoformat(),
+    )
+
+
+def _option_exit_snapshot_from_row(
+    row: sqlite3.Row,
+) -> OptionSpreadExitSnapshot:
+    return OptionSpreadExitSnapshot(
+        cycle_id=str(row["cycle_id"]),
+        short_symbol=str(row["short_symbol"]),
+        long_symbol=str(row["long_symbol"]),
+        state=OptionExitState(str(row["state"])),
+        short_remaining_quantity=Decimal(str(row["short_remaining_quantity"])),
+        long_remaining_quantity=Decimal(str(row["long_remaining_quantity"])),
+        active_order_link_id=(
+            None
+            if row["active_order_link_id"] is None
+            else str(row["active_order_link_id"])
+        ),
         version=int(row["version"]),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )

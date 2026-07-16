@@ -44,47 +44,47 @@ def test_open_short_pnl_is_accounted_separately() -> None:
 
 
 def test_stop_accounting_tracks_debt_and_incremental_loss() -> None:
-    result = make_engine().run_with_accounting(["3010", "3000", "3004.50"])
+    result = make_engine().run_with_accounting(["3010", "3000", "3003"])
     final = result.snapshots[-1]
 
     assert final.option_terminal_value_pnl == Decimal("30")
-    assert final.realized_hedge_pnl == Decimal("-4.5000")
-    assert final.combined_terminal_value_pnl == Decimal("25.5000")
-    assert final.incremental_pnl_since_entry == Decimal("-4.5000")
-    assert final.gross_stop_losses == Decimal("4.5000")
+    assert final.realized_hedge_pnl == Decimal("-3.00")
+    assert final.combined_terminal_value_pnl == Decimal("27.00")
+    assert final.incremental_pnl_since_entry == Decimal("-3.00")
+    assert final.gross_stop_losses == Decimal("3.00")
     assert final.gross_tp_profits == Decimal("0")
-    assert final.outstanding_recovery_debt == Decimal("4.5000")
-    assert final.remaining_premium_stop_budget == Decimal("25.5000")
+    assert final.outstanding_recovery_debt == Decimal("3.00")
+    assert final.remaining_premium_stop_budget == Decimal("27.00")
 
 
 def test_negative_combined_pnl_is_not_clamped() -> None:
-    result = make_engine("15").run_with_accounting(
-        ["3010", "3000", "3004.50", "3000", "3004.50", "3000", "2890"]
+    result = make_engine("10").run_with_accounting(
+        ["3010", "3000", "3003", "3000", "3003", "3000", "2890"]
     )
 
-    assert result.snapshots[-1].combined_terminal_value_pnl == Decimal("-15.01250000")
-    assert result.metrics.minimum_combined_pnl == Decimal("-15.01250000")
+    assert result.snapshots[-1].combined_terminal_value_pnl == Decimal("-16.4500")
+    assert result.metrics.minimum_combined_pnl == Decimal("-16.4500")
     assert result.metrics.floor_pass is False
     assert result.metrics.locked_levels == (1,)
     assert result.metrics.number_of_entries == 6
     assert result.metrics.number_of_stops == 2
     assert result.metrics.number_of_tps == 4
-    assert result.metrics.outstanding_recovery_debt == Decimal("10.01250000")
+    assert result.metrics.outstanding_recovery_debt == Decimal("6.4500")
 
 
 def test_breakeven_floor_policy_prevents_the_unhedged_locked_zone_loss() -> None:
     engine = HedgeEngine(
-        CreditSpread("3010", "3000", "2900", "1", "15"),
+        CreditSpread("3010", "3000", "2900", "1", "10"),
         level_count=5,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
     )
     result = engine.run_with_accounting(
-        ["3010", "3000", "3004.50", "3000", "3004.50", "3000", "2890"]
+        ["3010", "3000", "3003", "3000", "3003", "3000", "2890"]
     )
 
     assert LedgerEventType.FLOOR_ENTRY in [event.event_type for event in result.events]
-    assert result.metrics.combined_pnl == Decimal("15")
-    assert result.metrics.minimum_combined_pnl == Decimal("4.98750000")
+    assert result.metrics.combined_pnl == Decimal("10.0000")
+    assert result.metrics.minimum_combined_pnl == Decimal("3.5500")
     assert result.metrics.floor_pass is True
     assert result.metrics.floor_entry_count == 1
     assert result.metrics.locked_levels == ()
@@ -94,7 +94,7 @@ def test_breakeven_floor_policy_prevents_the_unhedged_locked_zone_loss() -> None
 
 def test_floor_hedge_exits_at_breakeven_and_can_reenter_without_more_debt() -> None:
     engine = HedgeEngine(
-        CreditSpread("3010", "3000", "2980", "1", "15"),
+        CreditSpread("3010", "3000", "2980", "1", "10"),
         level_count=1,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
     )
@@ -102,9 +102,9 @@ def test_floor_hedge_exits_at_breakeven_and_can_reenter_without_more_debt() -> N
         [
             "3010",
             "3000",
-            "3004.50",
+            "3003",
             "3000",
-            "3004.50",
+            "3003",
             "3000",
             "3000.1",
             "3000",
@@ -118,8 +118,8 @@ def test_floor_hedge_exits_at_breakeven_and_can_reenter_without_more_debt() -> N
     ]
     assert result.metrics.floor_entry_count == 2
     assert result.metrics.breakeven_exit_count == 1
-    assert result.metrics.premium_budget_consumed == Decimal("10.01250000")
-    assert result.metrics.outstanding_recovery_debt == Decimal("10.01250000")
+    assert result.metrics.premium_budget_consumed == Decimal("6.4500")
+    assert result.metrics.outstanding_recovery_debt == Decimal("6.4500")
     assert result.levels[0].active_is_floor is True
 
 
@@ -142,7 +142,7 @@ def test_coarse_and_tenth_tick_paths_have_the_same_accounting_minimum() -> None:
     assert [
         (event.event_type, event.level_id, event.price) for event in coarse.events
     ] == [(event.event_type, event.level_id, event.price) for event in fine.events]
-    assert coarse.metrics.minimum_combined_pnl == Decimal("25.62000")
+    assert coarse.metrics.minimum_combined_pnl == Decimal("27.00")
     assert coarse.metrics.minimum_combined_pnl == fine.metrics.minimum_combined_pnl
     assert {
         snapshot.event_sequence

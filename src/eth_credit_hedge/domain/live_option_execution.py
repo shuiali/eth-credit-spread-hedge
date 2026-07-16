@@ -191,6 +191,16 @@ class OptionSpreadExecutionSnapshot:
             - short_fee
         )
 
+    @property
+    def actual_gross_credit(self) -> Decimal:
+        matched = self.matched_quantity
+        if matched == ZERO:
+            return ZERO
+        return (
+            self.short_average_price * matched
+            - self.long_average_price * matched
+        )
+
     def position_snapshot(self) -> OptionPositionSnapshot:
         if self.state is not OptionPositionState.OPEN:
             raise ValueError("only an OPEN spread has a position snapshot")
@@ -370,9 +380,12 @@ def finalize_short_premium(
     expected_for_match = (
         snapshot.expected_net_credit * matched / snapshot.requested_quantity
     )
-    deviation = abs(snapshot.actual_net_credit - expected_for_match)
+    # The operator bound is a leg-price/execution bound. Fees remain part of
+    # actual net credit accounting, but are not adverse fill-price deviation.
+    deviation = abs(snapshot.actual_gross_credit - expected_for_match)
     accepted = (
-        snapshot.actual_net_credit > ZERO
+        snapshot.actual_net_credit >= policy.minimum_net_credit
+        and snapshot.actual_net_credit > ZERO
         and policy.accepts_completion(
             requested_quantity=snapshot.requested_quantity,
             matched_quantity=matched,

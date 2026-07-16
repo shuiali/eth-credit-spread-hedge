@@ -140,16 +140,21 @@ class StrategyCloseService:
         self._trading = trading
         self._operations = operations
 
-    async def close(self, *, reason: str, requested_by: str) -> StrategyCloseResult:
+    async def close(
+        self,
+        *,
+        reason: str,
+        requested_by: str,
+        close_option_spread: bool = True,
+    ) -> StrategyCloseResult:
         state = await self._controller.activate(
             KillSwitchMode.STRATEGY_CLOSE,
             reason=reason,
             requested_by=requested_by,
         )
-        await self._trading.cancel_all("linear", "ETHUSDT")
-        await self._trading.cancel_all("option")
         await self._operations.close_hedges()
-        await self._operations.close_option_spread()
+        if close_option_spread:
+            await self._operations.close_option_spread()
         verified = await self._operations.verify_strategy_closed()
         return StrategyCloseResult(state, verified)
 

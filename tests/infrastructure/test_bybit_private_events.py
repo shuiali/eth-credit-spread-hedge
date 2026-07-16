@@ -147,6 +147,21 @@ def test_private_parser_normalizes_optional_decimals_and_order_duplicates() -> N
     assert duplicate.updates == ()
 
 
+def test_private_parser_treats_market_order_zero_prices_as_missing() -> None:
+    message = order_message()
+    item = message["data"][0]
+    item["orderType"] = "Market"
+    item["price"] = "0"
+    item["avgPrice"] = "0"
+
+    event = BybitPrivateEventParser().parse_message(message)
+
+    assert isinstance(event, OrderUpdateBatch)
+    assert event.updates[0].order_type == "Market"
+    assert event.updates[0].price is None
+    assert event.updates[0].average_price is None
+
+
 def test_execution_parser_preserves_every_execution_in_one_message() -> None:
     batch = parse_execution_message(execution_message())
 
@@ -178,6 +193,16 @@ def test_position_parser_treats_empty_exchange_decimals_as_missing_or_zero() -> 
     assert position.liquidation_price is None
     assert position.unrealized_pnl == Decimal("0")
     assert position.position_idx == 2
+
+
+def test_position_parser_treats_flat_zero_entry_price_as_missing() -> None:
+    message = position_message()
+    message["data"][0]["entryPrice"] = "0"
+
+    position = parse_position_message(message)[0]
+
+    assert position.quantity == Decimal("0")
+    assert position.average_price is None
 
 
 class FakeSocket:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -18,6 +19,10 @@ from eth_credit_hedge.domain.live_execution import (
     EntryExecutionSnapshot,
     apply_entry_execution,
     transition_entry_snapshot,
+)
+from eth_credit_hedge.domain.option_exit import (
+    OptionExitState,
+    OptionSpreadExitSnapshot,
 )
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     ConcurrentSnapshotUpdateError,
@@ -87,5 +92,35 @@ def test_stale_snapshot_rolls_back_execution_insert(tmp_path: Path) -> None:
         assert not await store.has_execution("execution-stale")
         assert await store.execution_count() == 0
         assert await store.load_entry_snapshot(ORDER_LINK_ID) == initial
+
+    asyncio.run(exercise())
+
+
+def test_option_exit_snapshot_is_restartable_and_versioned(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        store = SqliteExecutionStore(tmp_path / "execution.sqlite3")
+        await store.initialize()
+        initial = OptionSpreadExitSnapshot(
+            cycle_id="cycle-1",
+            short_symbol="ETH-31JUL26-3000-P-USDT",
+            long_symbol="ETH-31JUL26-2900-P-USDT",
+            state=OptionExitState.NOT_STARTED,
+            short_remaining_quantity=Decimal("0.1"),
+            long_remaining_quantity=Decimal("0.1"),
+            active_order_link_id=None,
+            version=1,
+            updated_at=NOW,
+        )
+        await store.persist_option_exit_snapshot(initial)
+        closing = replace(
+            initial,
+            state=OptionExitState.SHORT_CLOSING,
+            active_order_link_id="ECH-SIM-C0001-L00-OS-A02-ABCD",
+            version=2,
+            updated_at=NOW + timedelta(seconds=1),
+        )
+        await store.transition_option_exit_snapshot(1, closing)
+        assert await store.load_option_exit_snapshot("cycle-1") == closing
+        assert await store.schema_version() == 6
 
     asyncio.run(exercise())

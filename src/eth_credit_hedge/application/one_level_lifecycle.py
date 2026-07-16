@@ -20,7 +20,7 @@ from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
 from eth_credit_hedge.domain.protected_execution import (
     ProtectionSnapshot,
-    protection_position_matches,
+    aggregate_protection_position_matches,
 )
 from eth_credit_hedge.ports.account import AccountPort
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
@@ -94,7 +94,8 @@ class OneLevelLifecycleService:
         *,
         stop_order_link_id: str,
         take_profit_order_link_id: str,
-        stop_rate: Decimal,
+        stop_distance: Decimal | None = None,
+        stop_rate: Decimal | None = None,
         take_profit_price: Decimal,
         reference_price: Decimal,
     ) -> ProtectedOneLevel:
@@ -124,6 +125,7 @@ class OneLevelLifecycleService:
             entry,
             stop_order_link_id=stop_order_link_id,
             take_profit_order_link_id=take_profit_order_link_id,
+            stop_distance=stop_distance,
             stop_rate=stop_rate,
             take_profit_price=take_profit_price,
         )
@@ -134,21 +136,50 @@ class OneLevelLifecycleService:
         *,
         stop_order_link_id: str,
         take_profit_order_link_id: str,
-        stop_rate: Decimal,
+        stop_distance: Decimal | None = None,
+        stop_rate: Decimal | None = None,
         take_profit_price: Decimal,
     ) -> ProtectedOneLevel:
         entry = await self.await_entry_fill(entry)
         positions = await self._account.get_positions("linear", "ETHUSDT")
-        if not await self._entry.reconcile_position(positions):
+        existing_protection = await self._store.load_all_protection_snapshots()
+        expected_existing = sum(
+            (snapshot.open_quantity for snapshot in existing_protection),
+            Decimal("0"),
+        )
+        expected = expected_existing + entry.filled_quantity
+        actual = sum(
+            (
+                position.quantity
+                for position in positions
+                if position.category == "linear"
+                and position.symbol == "ETHUSDT"
+                and position.side == "Sell"
+            ),
+            Decimal("0"),
+        )
+        if actual != expected:
             raise LifecyclePositionMismatchError(
                 "entry executions do not match the ETHUSDT position"
             )
 
+        average_entry_price = entry.entry_notional / entry.filled_quantity
+        if (stop_distance is None) == (stop_rate is None):
+            raise ValueError("provide exactly one stop distance or stop rate")
+        if stop_distance is not None:
+            if stop_distance <= 0:
+                raise ValueError("stop distance must be positive")
+            resolved_stop_rate = stop_distance / average_entry_price
+        else:
+            assert stop_rate is not None
+            if stop_rate <= 0:
+                raise ValueError("stop rate must be positive")
+            resolved_stop_rate = stop_rate
         protection = await self._exits.install_stop(
             entry.order_link_id,
             self._instrument,
             stop_order_link_id,
-            stop_rate=stop_rate,
+            stop_rate=resolved_stop_rate,
         )
         protection = await self._exits.install_take_profit(
             protection,
@@ -157,7 +188,8 @@ class OneLevelLifecycleService:
             desired_price=take_profit_price,
         )
         positions = await self._account.get_positions("linear", "ETHUSDT")
-        if not protection_position_matches(protection, positions):
+        all_protection = await self._store.load_all_protection_snapshots()
+        if not aggregate_protection_position_matches(all_protection, positions):
             raise LifecyclePositionMismatchError(
                 "protected quantity does not match the ETHUSDT position"
             )
@@ -173,40 +205,52 @@ class OneLevelLifecycleService:
         self,
         entry_order_link_id: str,
     ) -> ProtectionSnapshot:
-        snapshot = await self._required_protection(entry_order_link_id)
-        exit_ids = {snapshot.stop_order_link_id, snapshot.tp_order_link_id}
         for attempt in range(self._fill_attempts):
-            executions = await self._trading.get_execution_history(
-                "linear",
-                "ETHUSDT",
-            )
-            for execution in sorted(
-                (
-                    execution
-                    for execution in executions
-                    if execution.order_link_id in exit_ids
-                ),
-                key=lambda value: (value.executed_at, value.execution_id),
-            ):
-                snapshot = await self._exits.apply_exit_execution(
-                    execution,
-                    received_at=self._clock(),
-                    payload_hash=execution_payload_hash(execution),
-                )
-            if snapshot.state is LiveExecutionState.CANCEL_PENDING:
-                snapshot = await self._exits.reconcile_after_exit(
-                    entry_order_link_id
-                )
-            if snapshot.state in (
-                LiveExecutionState.CLOSED_TP,
-                LiveExecutionState.CLOSED_STOP,
-            ):
+            snapshot = await self.poll_exit(entry_order_link_id)
+            if snapshot is not None:
                 return snapshot
             if attempt + 1 < self._fill_attempts:
                 await self._sleeper(self._fill_interval_seconds)
         raise ExitFillNotConfirmedError(
             f"protective exit for {entry_order_link_id} was not confirmed"
         )
+
+    async def poll_exit(
+        self,
+        entry_order_link_id: str,
+    ) -> ProtectionSnapshot | None:
+        snapshot = await self._required_protection(entry_order_link_id)
+        exit_ids = {snapshot.stop_order_link_id, snapshot.tp_order_link_id}
+        executions = await self._trading.get_execution_history(
+            "linear",
+            "ETHUSDT",
+        )
+        for execution in sorted(
+            (
+                execution
+                for execution in executions
+                if execution.order_link_id in exit_ids
+            ),
+            key=lambda value: (value.executed_at, value.execution_id),
+        ):
+            snapshot = await self._exits.apply_exit_execution(
+                execution,
+                received_at=self._clock(),
+                payload_hash=execution_payload_hash(execution),
+            )
+        if snapshot.state in (
+            LiveExecutionState.CANCEL_PENDING,
+            LiveExecutionState.RECONCILING,
+        ) and snapshot.open_quantity == Decimal("0"):
+            snapshot = await self._exits.reconcile_after_exit(
+                entry_order_link_id
+            )
+        if snapshot.state in (
+            LiveExecutionState.CLOSED_TP,
+            LiveExecutionState.CLOSED_STOP,
+        ):
+            return snapshot
+        return None
 
     async def _await_entry_fill(
         self,

@@ -109,7 +109,7 @@ def run_monte_carlo(
     recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
     recovery_tp_count: int = 3,
     lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
-    stop_rate: DecimalLike = "0.0015",
+    stop_rate: DecimalLike = "0.15",
 ) -> MonteCarloResult:
     """Generate, persist, and replay every seeded Monte Carlo tick path."""
     paths: list[tuple[Decimal, ...]] = []

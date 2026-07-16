@@ -70,9 +70,16 @@ def policy() -> OptionEntryPolicy:
 
 
 class FilledOptionExchange:
-    def __init__(self, store: SqliteExecutionStore, *, reject_short: bool = False):
+    def __init__(
+        self,
+        store: SqliteExecutionStore,
+        *,
+        reject_short: bool = False,
+        fee: Decimal = Decimal("0.01"),
+    ):
         self.store = store
         self.reject_short = reject_short
+        self.fee = fee
         self.requests: list[PlaceOrderRequest] = []
         self.executions: dict[str, ExecutionUpdate] = {}
 
@@ -91,7 +98,7 @@ class FilledOptionExchange:
             side=request.side,
             price=price,
             quantity=request.quantity,
-            fee=Decimal("0.01"),
+            fee=self.fee,
             is_maker=False,
             executed_at=NOW,
         )
@@ -154,10 +161,11 @@ def make_service(
     path: Path,
     *,
     reject_short: bool = False,
+    fee: Decimal = Decimal("0.01"),
 ) -> tuple[OptionSpreadEntryService, FilledOptionExchange, SqliteExecutionStore]:
     store = SqliteExecutionStore(path)
     asyncio.run(store.initialize())
-    exchange = FilledOptionExchange(store, reject_short=reject_short)
+    exchange = FilledOptionExchange(store, reject_short=reject_short, fee=fee)
     service = OptionSpreadEntryService(
         trading=exchange,
         store=store,
@@ -184,6 +192,29 @@ def test_long_fills_before_short_and_open_snapshot_survives_restart(
     asyncio.run(restarted.initialize())
     assert asyncio.run(restarted.load_option_spread_snapshot("D3-C0001")) == snapshot
     assert snapshot.position_snapshot().actual_net_credit == Decimal("2.20")
+
+
+def test_leg_price_deviation_excludes_fees_but_net_credit_floor_includes_them(
+    tmp_path: Path,
+) -> None:
+    service, _, _ = make_service(
+        tmp_path / "price-deviation.sqlite3",
+        fee=Decimal("0.10"),
+    )
+    strict_price_policy = OptionEntryPolicy(
+        max_leg_wait_seconds=Decimal("5"),
+        allow_partial_spread=False,
+        minimum_matched_quantity=Decimal("0.1"),
+        maximum_credit_deviation=Decimal("0.03"),
+        minimum_net_credit=Decimal("2.00"),
+        unmatched_long_policy=UnmatchedLongPolicy.RETAIN,
+    )
+
+    snapshot = asyncio.run(service.open_spread(plan(), strict_price_policy))
+
+    assert snapshot.state is OptionPositionState.OPEN
+    assert snapshot.actual_gross_credit == Decimal("2.22")
+    assert snapshot.actual_net_credit == Decimal("2.02")
 
 
 def test_short_rejection_retains_only_the_confirmed_protective_long(

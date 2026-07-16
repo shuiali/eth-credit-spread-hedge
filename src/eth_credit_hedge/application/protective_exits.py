@@ -289,8 +289,11 @@ class ProtectiveExitService:
         snapshot = await self._store.load_protection_snapshot(entry_order_link_id)
         if snapshot is None:
             raise ValueError("protection snapshot does not exist")
-        if snapshot.state is not LiveExecutionState.CANCEL_PENDING:
-            raise ValueError("exit reconciliation requires CANCEL_PENDING state")
+        if snapshot.state not in (
+            LiveExecutionState.CANCEL_PENDING,
+            LiveExecutionState.RECONCILING,
+        ) or snapshot.open_quantity != Decimal("0"):
+            raise ValueError("exit reconciliation requires a locally closed exit")
 
         open_orders = await self._trading.get_open_orders("linear", "ETHUSDT")
         exit_ids = {snapshot.stop_order_link_id, snapshot.tp_order_link_id}

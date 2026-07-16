@@ -1,0 +1,8 @@
+{
+  "description": "Domain inputs that must fail before producing strategy outputs.",
+  "units": {"price": "USD/ETH", "quantity": "ETH", "money": "USD"},
+  "inputs": {"cases": ["nonpositive level count", "terminal-only DELTA_STEP", "nonpositive net TP", "negative confirmed debt"]},
+  "calculation_steps": ["Each case violates a declared domain invariant; no expected numerical output is generated."],
+  "expected_outputs": {"errors": ["InvalidConfigurationError", "DeltaSpacingUnavailableError", "NonPositiveNetProfitError", "ValueError"]},
+  "independent_reviewer": "pending_second_human_review"
+}

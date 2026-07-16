@@ -1,0 +1,8 @@
+{
+  "description": "Standard first-level ENTRY_PERCENT stop.",
+  "units": {"price": "USD/ETH", "rate": "dimensionless"},
+  "inputs": {"entry_price": "3000", "tp_price": "2980", "entry_stop_rate": "0.0015"},
+  "calculation_steps": ["stop distance = 3000 * 0.0015 = 4.5", "stop price = 3000 + 4.5 = 3004.5"],
+  "expected_outputs": {"stop_distance": "4.5", "stop_price": "3004.5"},
+  "independent_reviewer": "pending_second_human_review"
+}

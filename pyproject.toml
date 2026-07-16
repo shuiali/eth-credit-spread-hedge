@@ -29,7 +29,10 @@ eth_credit_hedge = ["py.typed", "config/environments/*.toml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-markers = ["live: opt-in tests that contact a public exchange API"]
+markers = [
+    "live: opt-in tests that contact a public exchange API",
+    "legacy_characterization: documents superseded pre-M1 formula behavior",
+]
 
 [tool.ruff]
 target-version = "py311"

@@ -1,0 +1,8 @@
+{
+  "description": "True delta boundaries on synthetic delta(P)=2P.",
+  "units": {"price": "synthetic USD/ETH", "delta": "ETH-equivalent exposure"},
+  "inputs": {"start_price": "10", "end_price": "4", "delta_step": "4", "delta_curve": "2 * price"},
+  "calculation_steps": ["starting delta = 2 * 10 = 20", "targets descend by 4: 20, 16, 12, 8", "price = target / 2"],
+  "expected_outputs": {"boundaries": ["10", "8", "6", "4"], "entry_delta_targets": ["20", "16", "12"]},
+  "independent_reviewer": "pending_second_human_review"
+}

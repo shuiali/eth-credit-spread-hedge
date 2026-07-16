@@ -1,0 +1,8 @@
+{
+  "description": "Standard PRICE_STEP example calculated from a 100 USD strike width divided into five 20 USD zones.",
+  "units": {"prices": "USD/ETH", "quantity": "ETH", "budget": "USD"},
+  "inputs": {"short_put_strike": "3000", "long_put_strike": "2900", "option_quantity": "0.1", "level_count": 5},
+  "calculation_steps": ["width = 3000 - 2900 = 100", "price_step = 100 / 5 = 20", "boundary_i = 3000 - i * 20"],
+  "expected_outputs": {"boundaries": ["3000", "2980", "2960", "2940", "2920", "2900"], "zone_budgets": ["2", "2", "2", "2", "2"]},
+  "independent_reviewer": "pending_second_human_review"
+}

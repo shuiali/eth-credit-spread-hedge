@@ -4,11 +4,11 @@ from decimal import Decimal
 
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.virtual_levels import (
-    LegacyPriceStepLevelGenerator,
     LevelState,
+    build_single_virtual_level,
     build_virtual_levels,
 )
-from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
+from eth_credit_hedge.domain.strategy_math import EntryPercentStopConfig, Rate
 
 
 def make_spread() -> CreditSpread:
@@ -70,32 +70,17 @@ def test_levels_cover_the_spread_without_overlap_or_gaps() -> None:
     assert min(level.tp_price for level in levels) == spread.long_put_strike
 
 
-def test_legacy_generator_matches_new_level_count_runtime_adapter() -> None:
-    spread = make_spread()
-
-    legacy = LegacyPriceStepLevelGenerator.generate(spread, 7)
-    current = build_virtual_levels(
-        spread,
-        7,
-        PriceStepFractionStopConfig(Rate(Decimal("0.15"))),
+def test_single_level_runtime_adapter_uses_authoritative_budget_and_stop() -> None:
+    level = build_single_virtual_level(
+        level_id=7,
+        entry_price=Decimal("3000"),
+        tp_price=Decimal("2980"),
+        option_quantity=Decimal("0.1"),
+        stop=EntryPercentStopConfig(Rate(Decimal("0.005"))),
     )
 
-    assert [
-        (
-            level.level_id,
-            level.entry_price,
-            level.tp_price,
-            level.stop_price,
-            level.option_budget,
-        )
-        for level in current
-    ] == [
-        (
-            level.level_id,
-            level.entry_price,
-            level.tp_price,
-            level.stop_price,
-            level.option_budget,
-        )
-        for level in legacy
-    ]
+    assert level.level_id == 7
+    assert level.option_budget == Decimal("2.0")
+    assert level.stop_price == Decimal("3015.000")
+    assert level.stop_mode.value == "ENTRY_PERCENT"
+    assert level.stop_parameter == Decimal("0.005")

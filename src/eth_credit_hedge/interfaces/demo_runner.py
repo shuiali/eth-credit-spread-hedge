@@ -48,7 +48,7 @@ from eth_credit_hedge.config.deployment import (
     load_all_environment_profiles,
 )
 from eth_credit_hedge.config.schema import RuntimeEnvironment
-from eth_credit_hedge.core.virtual_levels import HedgeLevel
+from eth_credit_hedge.core.virtual_levels import build_single_virtual_level
 from eth_credit_hedge.domain.client_order_ids import (
     ClientOrderId,
     ClientOrderRole,
@@ -109,6 +109,7 @@ from eth_credit_hedge.domain.risk import (
     RiskState,
     TradeProposal,
 )
+from eth_credit_hedge.domain.strategy_math import EntryPercentStopConfig, Rate
 from eth_credit_hedge.infrastructure.bybit.clock import ClockStaleError, ServerClock
 from eth_credit_hedge.infrastructure.bybit.error_mapping import (
     BybitUnknownOrderError,
@@ -672,12 +673,12 @@ async def _run_recovery_perp_cycle(
     tp_price = entry_price - tp_distance
     if tp_price <= ZERO:
         raise DemoMutationRefusedError("D6 TP price is invalid")
-    level = HedgeLevel(
+    level = build_single_virtual_level(
         level_id=level_id,
         entry_price=entry_price,
         tp_price=tp_price,
-        stop_price=entry_price * Decimal("1.005"),
-        option_budget=option.matched_quantity * tp_distance,
+        option_quantity=option.matched_quantity,
+        stop=EntryPercentStopConfig(Rate(Decimal("0.005"))),
     )
     quote_timestamps = _option_quote_timestamps(option, option_quotes)
     _put_spread_position(option, option_instruments)
@@ -1273,16 +1274,12 @@ async def _run_automatic_perp_cycle(
         level_entry = first_trade.price - instrument.price_filter.tick_size
         if level_entry <= ZERO:
             raise DemoMutationRefusedError("automatic level entry is invalid")
-        level = HedgeLevel(
+        level = build_single_virtual_level(
             level_id=1,
             entry_price=level_entry,
             tp_price=level_entry * Decimal("0.995"),
-            stop_price=level_entry * Decimal("1.005"),
-            option_budget=(
-                option.matched_quantity
-                * level_entry
-                * Decimal("0.005")
-            ),
+            option_quantity=option.matched_quantity,
+            stop=EntryPercentStopConfig(Rate(Decimal("0.005"))),
         )
         coordinator = OneLevelCoordinator(
             entry_service=entry_service,
@@ -1451,18 +1448,13 @@ async def _run_multiple_perp_cycle(
         first_trade = await asyncio.wait_for(anext(trade_stream), timeout=20)
         tick = instrument.price_filter.tick_size
         levels = tuple(
-            HedgeLevel(
+            build_single_virtual_level(
                 level_id=level_id,
                 entry_price=first_trade.price - tick * level_id,
                 tp_price=(first_trade.price - tick * level_id)
                 * Decimal("0.995"),
-                stop_price=(first_trade.price - tick * level_id)
-                * Decimal("1.005"),
-                option_budget=(
-                    option.matched_quantity
-                    * (first_trade.price - tick * level_id)
-                    * Decimal("0.005")
-                ),
+                option_quantity=option.matched_quantity,
+                stop=EntryPercentStopConfig(Rate(Decimal("0.005"))),
             )
             for level_id in (1, 2)
         )

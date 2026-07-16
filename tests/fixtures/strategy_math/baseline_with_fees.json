@@ -1,0 +1,8 @@
+{
+  "description": "Standard baseline with explicit entry, TP, and stop fees and CEIL quantity rounding.",
+  "units": {"prices": "USD/ETH", "quantity": "ETH", "fee_rates": "dimensionless", "money": "USD"},
+  "inputs": {"zone_budget": "2", "entry_price": "3000", "tp_price": "2980", "stop_price": "3004.5", "entry_fee_rate": "0.0002", "tp_fee_rate": "0.0002", "stop_fee_rate": "0.0006", "quantity_step": "0.001"},
+  "calculation_steps": ["entry fee/ETH = 3000 * 0.0002 = 0.6000", "TP fee/ETH = 2980 * 0.0002 = 0.5960", "net TP/ETH = 20 - 0.6000 - 0.5960 = 18.8040", "raw quantity = 2 / 18.8040 = 0.1063603488619442671771963412", "CEIL to 0.001 gives 0.107", "stop loss/ETH = 4.5 + 0.6000 + 3004.5 * 0.0006 = 6.9027"],
+  "expected_outputs": {"net_tp_per_unit": "18.8040", "raw_quantity": "0.1063603488619442671771963412", "submitted_quantity": "0.107", "expected_net_tp": "2.012028", "projected_net_stop": "0.7385889", "overcoverage": "0.012028", "undercoverage": "0"},
+  "independent_reviewer": "pending_second_human_review"
+}

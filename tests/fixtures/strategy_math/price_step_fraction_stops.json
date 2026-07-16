@@ -1,0 +1,8 @@
+{
+  "description": "Legacy-compatible 15 percent-of-price-step stop geometry.",
+  "units": {"price": "USD/ETH", "fraction": "dimensionless"},
+  "inputs": {"entry_price": "3000", "tp_price": "2980", "price_step_fraction": "0.15"},
+  "calculation_steps": ["price step = 3000 - 2980 = 20", "stop distance = 20 * 0.15 = 3", "stop price = 3003"],
+  "expected_outputs": {"stop_distance": "3", "stop_price": "3003"},
+  "independent_reviewer": "pending_second_human_review"
+}

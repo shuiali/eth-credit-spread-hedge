@@ -7,12 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 
-from eth_credit_hedge.core.credit_spread import (
-    CreditSpread,
-    DecimalLike,
-    ZERO,
-    to_decimal,
-)
+from eth_credit_hedge.core.credit_spread import CreditSpread, ZERO
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
     ExpirationOptionValuation,
@@ -103,58 +98,6 @@ class HedgeLevel:
         ).submitted_quantity.value
 
 
-class LegacyPriceStepLevelGenerator:
-    """Characterized pre-M1 generator retained only for migration comparison."""
-
-    @staticmethod
-    def generate(
-        spread: CreditSpread,
-        level_count: int,
-        stop_rate: DecimalLike = "0.15",
-    ) -> list[HedgeLevel]:
-        if level_count <= 0:
-            raise ValueError("level count must be positive")
-        rate = to_decimal(stop_rate)
-        if rate <= ZERO:
-            raise ValueError("stop rate must be positive")
-
-        width = spread.short_put_strike - spread.long_put_strike
-        count = Decimal(level_count)
-        boundaries = [
-            spread.short_put_strike - width * Decimal(index) / count
-            for index in range(level_count)
-        ]
-        boundaries.append(spread.long_put_strike)
-
-        levels: list[HedgeLevel] = []
-        for index in range(level_count):
-            entry_price = boundaries[index]
-            tp_price = boundaries[index + 1]
-            price_step_usd = entry_price - tp_price
-            levels.append(
-                HedgeLevel(
-                    level_id=index + 1,
-                    entry_price=entry_price,
-                    tp_price=tp_price,
-                    stop_price=entry_price + price_step_usd * rate,
-                    option_budget=spread.option_quantity * price_step_usd,
-                    spacing_mode=LevelSpacingMode.PRICE_STEP,
-                    stop_mode=StopMode.PRICE_STEP_FRACTION,
-                    stop_parameter=rate,
-                )
-            )
-        return levels
-
-
-def generate_virtual_levels(
-    spread: CreditSpread,
-    level_count: int,
-    stop_rate: DecimalLike = "0.15",
-) -> list[HedgeLevel]:
-    """Compatibility entry point for the explicitly named legacy generator."""
-    return LegacyPriceStepLevelGenerator.generate(spread, level_count, stop_rate)
-
-
 def build_virtual_levels(
     spread: CreditSpread,
     level_count: int,
@@ -190,6 +133,28 @@ def build_price_step_virtual_levels(
         PriceStepSpacingConfig(Price(price_step_usd)),
         stop or EntryPercentStopConfig(Rate(Decimal("0.0015"))),
     )
+
+
+def build_single_virtual_level(
+    *,
+    level_id: int,
+    entry_price: Decimal,
+    tp_price: Decimal,
+    option_quantity: Decimal,
+    stop: StopConfig | None = None,
+) -> HedgeLevel:
+    """Adapt one explicit entry/TP pair through authoritative strategy math."""
+    level = _build_stop_levels(
+        OptionSpreadState(
+            short_put_strike=Price(entry_price),
+            long_put_strike=Price(tp_price),
+            option_quantity=Quantity(option_quantity),
+        ),
+        LevelCountSpacingConfig(1),
+        stop or EntryPercentStopConfig(Rate(Decimal("0.0015"))),
+    )[0]
+    level.level_id = level_id
+    return level
 
 
 def _build_stop_levels(

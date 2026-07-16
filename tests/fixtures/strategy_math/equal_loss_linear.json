@@ -1,0 +1,8 @@
+{
+  "description": "Equal-loss boundaries on the synthetic value curve V(P)=7+3P.",
+  "units": {"price": "synthetic USD/ETH", "option_value": "USD", "budget": "USD"},
+  "inputs": {"start_price": "10", "end_price": "4", "target_zone_loss": "6", "value_curve": "7 + 3 * price"},
+  "calculation_steps": ["A 6 USD value change requires 6 / 3 = 2 price units", "boundaries descend 10, 8, 6, 4"],
+  "expected_outputs": {"boundaries": ["10", "8", "6", "4"], "zone_budgets": ["6", "6", "6"]},
+  "independent_reviewer": "pending_second_human_review"
+}

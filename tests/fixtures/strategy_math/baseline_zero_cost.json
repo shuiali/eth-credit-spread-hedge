@@ -1,0 +1,8 @@
+{
+  "description": "Ideal standard baseline with no execution costs.",
+  "units": {"prices": "USD/ETH", "quantity": "ETH", "money": "USD"},
+  "inputs": {"zone_budget": "2", "entry_price": "3000", "tp_price": "2980", "stop_price": "3004.5", "quantity_step": "0.001"},
+  "calculation_steps": ["net TP per ETH = 3000 - 2980 = 20", "raw quantity = 2 / 20 = 0.1", "0.1 is already on the 0.001 step"],
+  "expected_outputs": {"net_tp_per_unit": "20", "raw_quantity": "0.1", "submitted_quantity": "0.1", "expected_net_tp": "2", "projected_net_stop": "0.45", "overcoverage": "0", "undercoverage": "0"},
+  "independent_reviewer": "pending_second_human_review"
+}

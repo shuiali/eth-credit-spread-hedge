@@ -1,0 +1,8 @@
+{
+  "description": "Recovery adds confirmed debt to the fee-bearing standard zone budget.",
+  "units": {"quantity": "ETH", "money": "USD"},
+  "inputs": {"zone_budget": "2", "confirmed_debt": "0.7385889", "buffer": "0", "net_tp_per_unit": "18.8040", "quantity_step": "0.001"},
+  "calculation_steps": ["required budget = 2 + 0.7385889 = 2.7385889", "raw quantity = 2.7385889 / 18.8040", "CEIL to 0.001 gives 0.146"],
+  "expected_outputs": {"required_budget": "2.7385889", "raw_quantity_approx": "0.1456386353967241012550521166", "submitted_quantity": "0.146", "expected_net_tp": "2.745384", "overcoverage": "0.0067951"},
+  "independent_reviewer": "pending_second_human_review"
+}

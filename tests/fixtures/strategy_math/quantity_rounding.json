@@ -1,0 +1,8 @@
+{
+  "description": "Quantity-step rounding exposes both overcoverage and undercoverage.",
+  "units": {"quantity": "ETH", "money": "USD"},
+  "inputs": {"raw_quantity": "0.1004", "quantity_step": "0.001", "net_tp_per_unit": "10", "required_budget": "1.004"},
+  "calculation_steps": ["CEIL(0.1004 / 0.001) * 0.001 = 0.101", "FLOOR(0.1004 / 0.001) * 0.001 = 0.100"],
+  "expected_outputs": {"ceil_quantity": "0.101", "ceil_overcoverage": "0.006", "floor_quantity": "0.100", "floor_undercoverage": "0.004"},
+  "independent_reviewer": "pending_second_human_review"
+}

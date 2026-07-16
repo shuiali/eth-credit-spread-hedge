@@ -1,0 +1,8 @@
+{
+  "description": "Equal-loss boundaries on V(P)=P^2, solved independently with square roots.",
+  "units": {"price": "synthetic USD/ETH", "option_value": "USD", "budget": "USD"},
+  "inputs": {"start_price": "10", "end_price": "4", "target_zone_loss": "36", "value_curve": "price squared"},
+  "calculation_steps": ["P1 = sqrt(10^2 - 36) = 8", "P2 = sqrt(8^2 - 36) = sqrt(28)", "final loss = 28 - 4^2 = 12"],
+  "expected_outputs": {"boundaries_approx": ["10", "8", "5.291502622129181", "4"], "zone_budgets_approx": ["36", "36", "12"]},
+  "independent_reviewer": "pending_second_human_review"
+}

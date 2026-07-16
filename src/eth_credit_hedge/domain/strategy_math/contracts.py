@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -21,6 +21,8 @@ from eth_credit_hedge.domain.strategy_math.units import (
     Price,
     Quantity,
     Rate,
+    Seconds,
+    Volatility,
 )
 
 
@@ -76,11 +78,34 @@ class OptionSpreadState:
 
 
 @dataclass(frozen=True, slots=True)
+class OptionLegValuationParameters:
+    symbol: str
+    strike: Price
+    volatility: Volatility | None = None
+    quote_source: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.symbol.strip():
+            raise UnsupportedValuationError(
+                "option valuation leg symbol cannot be empty"
+            )
+        if self.volatility is None and not (
+            self.quote_source is not None and self.quote_source.strip()
+        ):
+            raise UnsupportedValuationError(
+                "option valuation leg requires IV or an option quote source"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class OptionValuationContext:
     valuation_mode: OptionValuationMode
     observed_at_utc: datetime
     valid_until_utc: datetime
     delta_source_available: bool = False
+    time_to_expiry: Seconds | None = None
+    short_leg: OptionLegValuationParameters | None = None
+    long_leg: OptionLegValuationParameters | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -97,7 +122,13 @@ class OptionValuationContext:
                 "valuation valid-until timestamp cannot precede observation"
             )
 
-    def require_fresh(self, as_of_utc: datetime, *, require_delta: bool = False) -> None:
+    def require_fresh(
+        self,
+        as_of_utc: datetime,
+        *,
+        require_delta: bool = False,
+        require_model_inputs: bool = False,
+    ) -> None:
         if as_of_utc.tzinfo is None:
             raise UnsupportedValuationError(
                 "valuation freshness time must be timezone-aware"
@@ -110,6 +141,15 @@ class OptionValuationContext:
             raise DeltaSpacingUnavailableError(
                 "DELTA_STEP requires a current option-delta source"
             )
+        if require_model_inputs:
+            if self.time_to_expiry is None or self.time_to_expiry.value <= 0:
+                raise UnsupportedValuationError(
+                    "mark valuation requires positive time to expiry"
+                )
+            if self.short_leg is None or self.long_leg is None:
+                raise UnsupportedValuationError(
+                    "mark valuation requires short and long leg parameters"
+                )
 
 
 def require_valuation_context(
@@ -117,12 +157,17 @@ def require_valuation_context(
     as_of_utc: datetime,
     *,
     require_delta: bool = False,
+    require_model_inputs: bool = False,
 ) -> OptionValuationContext:
     if context is None:
         raise UnsupportedValuationError(
             "option valuation context is required and cannot be absent"
         )
-    context.require_fresh(as_of_utc, require_delta=require_delta)
+    context.require_fresh(
+        as_of_utc,
+        require_delta=require_delta,
+        require_model_inputs=require_model_inputs,
+    )
     return context
 
 
@@ -407,6 +452,63 @@ def validate_spacing_configuration_fields(
         )
 
 
+def parse_spacing_configuration(
+    mode: LevelSpacingMode | str,
+    fields: Mapping[str, object],
+) -> SpacingConfig:
+    """Parse one strict user-facing spacing section into its runtime contract."""
+    parsed_mode = LevelSpacingMode.parse(mode)
+    validate_spacing_configuration_fields(parsed_mode, fields.keys())
+    if parsed_mode is LevelSpacingMode.PRICE_STEP:
+        return PriceStepSpacingConfig(
+            Price(_decimal_field(fields, "price_step_usd"))
+        )
+    if parsed_mode is LevelSpacingMode.LEVEL_COUNT:
+        return LevelCountSpacingConfig(_integer_field(fields, "level_count"))
+    if parsed_mode is LevelSpacingMode.EQUAL_OPTION_LOSS:
+        return EqualOptionLossSpacingConfig(
+            target_zone_loss_usd=Money(
+                _decimal_field(fields, "target_zone_loss_usd")
+            ),
+            valuation_mode=OptionValuationMode.parse(
+                str(fields["valuation_mode"])
+            ),
+        )
+    return DeltaStepSpacingConfig(
+        delta_step=DeltaExposure(_decimal_field(fields, "delta_step")),
+        valuation_mode=OptionValuationMode.parse(str(fields["valuation_mode"])),
+        minimum_price=Price(_decimal_field(fields, "minimum_price")),
+        maximum_price=Price(_decimal_field(fields, "maximum_price")),
+        solver_tolerance=_decimal_field(fields, "solver_tolerance"),
+        maximum_iterations=_integer_field(fields, "maximum_iterations"),
+    )
+
+
+def _decimal_field(fields: Mapping[str, object], name: str) -> Decimal:
+    try:
+        value = Decimal(str(fields[name]))
+    except Exception as exc:
+        raise InvalidConfigurationError(
+            f"{name} must be a finite decimal value"
+        ) from exc
+    if not value.is_finite():
+        raise InvalidConfigurationError(f"{name} must be a finite decimal value")
+    return value
+
+
+def _integer_field(fields: Mapping[str, object], name: str) -> int:
+    value = fields[name]
+    if isinstance(value, bool):
+        raise InvalidConfigurationError(f"{name} must be an integer")
+    try:
+        parsed = int(str(value))
+    except ValueError as exc:
+        raise InvalidConfigurationError(f"{name} must be an integer") from exc
+    if str(parsed) != str(value):
+        raise InvalidConfigurationError(f"{name} must be an integer")
+    return parsed
+
+
 __all__ = [
     "CoverageResult",
     "DeltaStepSpacingConfig",
@@ -416,6 +518,7 @@ __all__ = [
     "LevelMath",
     "LevelSpacingMode",
     "OptionSpreadState",
+    "OptionLegValuationParameters",
     "OptionValuationContext",
     "OptionValuationMode",
     "PriceStepFractionStopConfig",
@@ -425,5 +528,6 @@ __all__ = [
     "StopConfig",
     "StopMode",
     "require_valuation_context",
+    "parse_spacing_configuration",
     "validate_spacing_configuration_fields",
 ]

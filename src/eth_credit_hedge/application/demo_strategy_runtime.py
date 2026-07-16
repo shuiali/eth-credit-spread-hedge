@@ -45,7 +45,7 @@ from eth_credit_hedge.application.same_level_recovery import SameLevelRecoverySe
 from eth_credit_hedge.config.bybit import load_bybit_demo_profile
 from eth_credit_hedge.config.schema import RuntimeConfig
 from eth_credit_hedge.core.credit_spread import CreditSpread
-from eth_credit_hedge.core.virtual_levels import generate_virtual_levels
+from eth_credit_hedge.core.virtual_levels import build_virtual_levels
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
 from eth_credit_hedge.domain.control import KillSwitchMode
 from eth_credit_hedge.domain.execution import (
@@ -480,7 +480,7 @@ async def run_simulated_strategy_command(
             option_quantity=option.matched_quantity,
             premium_credit=option.actual_net_credit,
         )
-        levels = generate_virtual_levels(spread, level_count, Decimal("0.15"))
+        levels = build_virtual_levels(spread, level_count, Decimal("0.15"))
         journal = await DemoRuntimeJournal.create(
             store=journal_store,
             state=DemoRuntimeState(
@@ -734,7 +734,7 @@ async def _open_new_cycle(
         option_quantity=command.option_quantity,
         premium_credit=expected_credit,
     )
-    levels = generate_virtual_levels(
+    levels = build_virtual_levels(
         spread,
         runtime_config.strategy.level_count,
         runtime_config.strategy.stop_rate,

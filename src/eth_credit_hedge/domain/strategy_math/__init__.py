@@ -8,6 +8,7 @@ from eth_credit_hedge.domain.strategy_math.contracts import (
     LevelCountSpacingConfig,
     LevelMath,
     LevelSpacingMode,
+    OptionLegValuationParameters,
     OptionSpreadState,
     OptionValuationContext,
     OptionValuationMode,
@@ -17,6 +18,7 @@ from eth_credit_hedge.domain.strategy_math.contracts import (
     SpacingConfig,
     StopConfig,
     StopMode,
+    parse_spacing_configuration,
     require_valuation_context,
     validate_spacing_configuration_fields,
 )
@@ -24,8 +26,10 @@ from eth_credit_hedge.domain.strategy_math.errors import (
     DeltaSpacingUnavailableError,
     InvalidConfigurationError,
     InvalidUnitsError,
+    NonMonotonicSpacingError,
     NonPositiveNetProfitError,
     QuantizationCoverageError,
+    RootNotBracketedError,
     StrategyMathError,
     UnsupportedValuationError,
 )
@@ -37,6 +41,15 @@ from eth_credit_hedge.domain.strategy_math.units import (
     Rate,
     Seconds,
     Volatility,
+)
+from eth_credit_hedge.domain.strategy_math.spacing import (
+    LevelSpacingEngine,
+    SpacingLevel,
+    solve_monotonic_price,
+)
+from eth_credit_hedge.domain.strategy_math.valuation import (
+    ExpirationOptionValuation,
+    OptionValuationPort,
 )
 
 __all__ = [
@@ -51,8 +64,11 @@ __all__ = [
     "LevelCountSpacingConfig",
     "LevelMath",
     "LevelSpacingMode",
+    "LevelSpacingEngine",
     "Money",
     "NonPositiveNetProfitError",
+    "NonMonotonicSpacingError",
+    "OptionLegValuationParameters",
     "OptionSpreadState",
     "OptionValuationContext",
     "OptionValuationMode",
@@ -63,13 +79,19 @@ __all__ = [
     "QuantityRoundingMode",
     "QuantizationCoverageError",
     "Rate",
+    "RootNotBracketedError",
     "Seconds",
     "SpacingConfig",
+    "SpacingLevel",
     "StopConfig",
     "StopMode",
     "StrategyMathError",
     "UnsupportedValuationError",
     "Volatility",
+    "ExpirationOptionValuation",
+    "OptionValuationPort",
+    "parse_spacing_configuration",
     "require_valuation_context",
+    "solve_monotonic_price",
     "validate_spacing_configuration_fields",
 ]

@@ -26,6 +26,14 @@ class DeltaSpacingUnavailableError(StrategyMathError):
     """True option-delta spacing cannot be produced by the valuation context."""
 
 
+class NonMonotonicSpacingError(StrategyMathError):
+    """A valuation curve cannot support deterministic ordered spacing."""
+
+
+class RootNotBracketedError(StrategyMathError):
+    """A requested valuation or delta target is outside the solver bracket."""
+
+
 class NonPositiveNetProfitError(StrategyMathError):
     """Expected net take-profit proceeds cannot support sizing."""
 
@@ -38,8 +46,10 @@ __all__ = [
     "DeltaSpacingUnavailableError",
     "InvalidConfigurationError",
     "InvalidUnitsError",
+    "NonMonotonicSpacingError",
     "NonPositiveNetProfitError",
     "QuantizationCoverageError",
+    "RootNotBracketedError",
     "StrategyMathError",
     "UnsupportedValuationError",
 ]

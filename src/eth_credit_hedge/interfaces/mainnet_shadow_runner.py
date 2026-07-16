@@ -25,7 +25,10 @@ from eth_credit_hedge.config.deployment import (
     load_all_environment_profiles,
 )
 from eth_credit_hedge.config.schema import RuntimeEnvironment
-from eth_credit_hedge.core.virtual_levels import HedgeLevel
+from eth_credit_hedge.core.virtual_levels import (
+    HedgeLevel,
+    build_price_step_virtual_levels,
+)
 from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.market_data import (
     MarketDataHealthResult,
@@ -189,19 +192,16 @@ def _shadow_levels(
     reference_price: Decimal,
 ) -> tuple[HedgeLevel, ...]:
     tick = instrument.price_filter.tick_size
-    delta_step = tick * Decimal("10")
+    price_step_usd = tick * Decimal("10")
     quantity = Decimal("0.10")
     levels = tuple(
-        HedgeLevel(
-            level_id=index,
-            entry_price=reference_price - delta_step * index,
-            tp_price=reference_price - delta_step * (index + 1),
-            stop_price=reference_price
-            - delta_step * index
-            + delta_step * Decimal("0.15"),
-            option_budget=quantity * delta_step,
+        build_price_step_virtual_levels(
+            short_put_strike=reference_price - price_step_usd,
+            long_put_strike=reference_price - price_step_usd * Decimal("21"),
+            option_quantity=quantity,
+            price_step_usd=price_step_usd,
+            stop_rate=Decimal("0.15"),
         )
-        for index in range(1, 21)
     )
     if any(level.tp_price <= ZERO for level in levels):
         raise RuntimeError("shadow level geometry is invalid")

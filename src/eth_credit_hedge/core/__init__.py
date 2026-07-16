@@ -14,7 +14,10 @@ from eth_credit_hedge.core.ledger import (
 )
 from eth_credit_hedge.core.virtual_levels import (
     HedgeLevel,
+    LegacyPriceStepLevelGenerator,
     LevelState,
+    build_price_step_virtual_levels,
+    build_virtual_levels,
     generate_virtual_levels,
 )
 
@@ -23,6 +26,7 @@ __all__ = [
     "AccountingSnapshot",
     "HedgeEngine",
     "HedgeLevel",
+    "LegacyPriceStepLevelGenerator",
     "Ledger",
     "LedgerEvent",
     "LedgerEventType",
@@ -32,5 +36,7 @@ __all__ = [
     "RecoveryMode",
     "StrategyMetrics",
     "StrategyResult",
+    "build_price_step_virtual_levels",
+    "build_virtual_levels",
     "generate_virtual_levels",
 ]

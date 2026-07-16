@@ -15,6 +15,7 @@ from eth_credit_hedge.domain.strategy_math import (
     LevelMath,
     LevelSpacingMode,
     Money,
+    NonMonotonicSpacingError,
     NonPositiveNetProfitError,
     OptionSpreadState,
     OptionValuationContext,
@@ -22,6 +23,7 @@ from eth_credit_hedge.domain.strategy_math import (
     Price,
     Quantity,
     QuantizationCoverageError,
+    RootNotBracketedError,
     StopMode,
     StrategyMathError,
     UnsupportedValuationError,
@@ -138,10 +140,12 @@ def test_coverage_flags_must_match_reconciled_amounts() -> None:
     [
         InvalidConfigurationError,
         InvalidUnitsError,
+        NonMonotonicSpacingError,
         UnsupportedValuationError,
         DeltaSpacingUnavailableError,
         NonPositiveNetProfitError,
         QuantizationCoverageError,
+        RootNotBracketedError,
     ],
 )
 def test_all_domain_errors_require_actionable_nonempty_messages(

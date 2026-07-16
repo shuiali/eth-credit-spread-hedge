@@ -27,7 +27,7 @@ from eth_credit_hedge.core.ledger import (
 from eth_credit_hedge.core.virtual_levels import (
     HedgeLevel,
     LevelState,
-    generate_virtual_levels,
+    build_virtual_levels,
 )
 
 
@@ -51,7 +51,7 @@ class HedgeEngine:
             recovery_tp_count=recovery_tp_count,
         )
         self.spread = spread
-        self.levels = generate_virtual_levels(
+        self.levels = build_virtual_levels(
             spread,
             self.config.level_count,
             self.config.stop_rate,

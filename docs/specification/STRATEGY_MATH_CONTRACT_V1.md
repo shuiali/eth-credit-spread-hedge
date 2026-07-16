@@ -51,6 +51,19 @@ ETH-equivalent exposure. It requires a current real delta source and a bounded
 solver interval. Terminal expiration payoff alone is rejected because it cannot
 honestly supply a multi-level delta grid.
 
+The authoritative `LevelSpacingEngine` evaluates the initial delta at the
+configured hedge-region maximum price and subtracts the configured delta step
+for successive targets. Each target is solved through the injected
+`OptionValuationPort`; underlying-price distance is never substituted for delta.
+The solver uses a closed price bracket, a finite iteration limit, the configured
+tolerance for absolute residual and relative bracket width, monotonicity checks,
+and deterministic errors for unbracketed or non-monotonic curves.
+
+`PRICE_STEP` clamps its final boundary to the hedge-region end and records the
+actual final distance. `LEVEL_COUNT` normalizes to price spacing and reports
+`PRICE_STEP` in generated results. `EQUAL_OPTION_LOSS` records the actual final
+loss when the remaining region is smaller than its target.
+
 ## Supported stop modes
 
 `ENTRY_PERCENT` defines:
@@ -78,6 +91,10 @@ but it cannot support true `DELTA_STEP`.
 
 `MARK_MODEL` uses a pre-expiry mark-to-market model with an explicit observation
 time, validity interval, and delta capability when required.
+
+Before model-based generation, the context must also contain positive time to
+expiry, short and long leg symbols and strikes, and either volatility or an
+identified option-quote source for each leg. Leg strikes must match the spread.
 
 `EXECUTABLE_LIQUIDATION` uses executable close prices for both legs, including
 the declared close-cost treatment. It also needs a fresh valuation context.
@@ -176,8 +193,11 @@ Milestone 1.1 does not choose the following silently:
 
 1. The approved deployment default between `ENTRY_PERCENT` and
    `PRICE_STEP_FRACTION`; Milestone 1.3 must resolve and migrate it.
-2. The concrete pre-expiry mark model, volatility source, interpolation policy,
-   and executable-liquidation quote policy; Milestone 1.2 owns them.
+2. The production pre-expiry mark-model implementation, volatility source,
+   interpolation policy, and executable-liquidation quote policy. Milestone 1.2
+   defines and tests the valuation port and rejects incomplete or stale model
+   inputs; production composition of a concrete market model remains a runtime
+   integration decision for Milestone 1.6.
 3. Cost rates, funding horizon, slippage convention, option-cost allocation, and
    explicit buffer policy; Milestone 1.4 owns them.
 4. The deployment rounding mode and whether undercoverage is rejected or

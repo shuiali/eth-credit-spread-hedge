@@ -20,6 +20,7 @@ from eth_credit_hedge.core.credit_spread import (
 )
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
+    ExpirationOptionValuation,
     InstrumentRules,
     Money,
     Rate,
@@ -59,6 +60,7 @@ class HedgeEngine:
         stop: StopConfig | None = None,
         costs: StrategyCostConfig | None = None,
         instrument_rules: InstrumentRules | None = None,
+        math_engine: StrategyMathEngine | None = None,
     ) -> None:
         selected_stop = stop or EntryPercentStopConfig(Rate(Decimal("0.0015")))
         self.config = StrategyConfig(
@@ -70,10 +72,14 @@ class HedgeEngine:
             costs=costs or StrategyCostConfig(),
         )
         self.spread = spread
+        self.math_engine = math_engine or StrategyMathEngine(
+            ExpirationOptionValuation()
+        )
         self.levels = build_virtual_levels(
             spread,
             self.config.level_count,
             self.config.stop,
+            math_engine=self.math_engine,
         )
         self.recovery_mode = self.config.recovery_mode
         self.recovery_tp_count = self.config.recovery_tp_count
@@ -246,7 +252,7 @@ class HedgeEngine:
         role: Literal["BASELINE", "RECOVERY"] = (
             "RECOVERY" if recovery_target > ZERO else "BASELINE"
         )
-        sizing = StrategyMathEngine.size_budget(
+        sizing = self.math_engine.size_budget(
             role=role,
             zone_option_loss_budget=Money(level.option_budget),
             confirmed_recovery_debt=Money(recovery_target),

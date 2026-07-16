@@ -41,6 +41,7 @@ from eth_credit_hedge.domain.risk import (
 )
 from eth_credit_hedge.domain.strategy_math import (
     InstrumentRules,
+    ExpirationOptionValuation,
     Money,
     Quantity,
     SizingStatus,
@@ -89,6 +90,7 @@ class MultiLevelCoordinator:
         order_link_id_factory: Callable[[int, int], str],
         entry_gate: EntryGatePort | None = None,
         costs: StrategyCostConfig | None = None,
+        math_engine: StrategyMathEngine | None = None,
     ) -> None:
         normalized_levels = tuple(levels)
         if not normalized_levels:
@@ -111,6 +113,9 @@ class MultiLevelCoordinator:
         self._order_link_id_factory = order_link_id_factory
         self._entry_gate = entry_gate
         self._costs = costs or StrategyCostConfig()
+        self._math_engine = math_engine or StrategyMathEngine(
+            ExpirationOptionValuation()
+        )
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._armed = {level.level_id: False for level in normalized_levels}
@@ -182,7 +187,7 @@ class MultiLevelCoordinator:
             if reasons:
                 blocked.append(LevelEntryBlock(level.level_id, reasons))
                 continue
-            sizing = StrategyMathEngine.size_budget(
+            sizing = self._math_engine.size_budget(
                 role="BASELINE",
                 zone_option_loss_budget=Money(level.option_budget),
                 confirmed_recovery_debt=Money(ZERO),

@@ -34,6 +34,7 @@ from eth_credit_hedge.domain.risk import (
 )
 from eth_credit_hedge.domain.strategy_math import (
     InstrumentRules,
+    ExpirationOptionValuation,
     Money,
     Quantity,
     SizingStatus,
@@ -65,6 +66,7 @@ class OneLevelCoordinator:
         order_link_id_factory: Callable[[], str],
         entry_gate: EntryGatePort | None = None,
         costs: StrategyCostConfig | None = None,
+        math_engine: StrategyMathEngine | None = None,
     ) -> None:
         if level.level_id != 1:
             raise ValueError("one-level coordinator requires level 1")
@@ -79,6 +81,9 @@ class OneLevelCoordinator:
         self._order_link_id_factory = order_link_id_factory
         self._entry_gate = entry_gate
         self._costs = costs or StrategyCostConfig()
+        self._math_engine = math_engine or StrategyMathEngine(
+            ExpirationOptionValuation()
+        )
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._entry_armed = False
@@ -134,7 +139,7 @@ class OneLevelCoordinator:
         if self._option_position.state is not OptionPositionState.OPEN:
             return OneLevelTriggerResult(False, ("option spread is not OPEN",))
 
-        sizing = StrategyMathEngine.size_budget(
+        sizing = self._math_engine.size_budget(
             role="BASELINE",
             zone_option_loss_budget=Money(self._level.option_budget),
             confirmed_recovery_debt=Money(Decimal("0")),

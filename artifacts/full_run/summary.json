@@ -1,0 +1,88 @@
+{
+  "offline_only": true,
+  "results": {
+    "stop_reentry_recovery": {
+      "actual_stop_debt": "0.76039700000",
+      "coverage": {
+        "fully_covered": true,
+        "overcoverage": "0.0015600",
+        "undercoverage": "0.0"
+      },
+      "expected_costs": {
+        "entry_fee_per_unit": {
+          "value": "0.6000"
+        },
+        "entry_slippage_per_unit": {
+          "value": "0.15"
+        },
+        "funding_to_stop_per_unit": {
+          "value": "-0.01"
+        },
+        "funding_to_tp_per_unit": {
+          "value": "-0.01"
+        },
+        "gross_stop_loss_per_unit": {
+          "value": "4.5000"
+        },
+        "gross_tp_profit_per_unit": {
+          "value": "20"
+        },
+        "spread_entry_per_unit": {
+          "value": "0.15"
+        },
+        "spread_stop_per_unit": {
+          "value": "0.150225"
+        },
+        "spread_tp_per_unit": {
+          "value": "0.149"
+        },
+        "stop_fee_per_unit": {
+          "value": "1.80270000"
+        },
+        "stop_slippage_per_unit": {
+          "value": "0.30045"
+        },
+        "tp_fee_per_unit": {
+          "value": "0.5960"
+        },
+        "tp_slippage_per_unit": {
+          "value": "0.149"
+        }
+      },
+      "expected_net_tp": "2.0015600",
+      "level_distances": [
+        "20",
+        "20",
+        "20",
+        "20",
+        "20"
+      ],
+      "level_entries": [
+        "3000",
+        "2980",
+        "2960",
+        "2940",
+        "2920"
+      ],
+      "projected_net_stop": "0.84297125000",
+      "raw_quantity": "0.1099142668718399648274346010",
+      "recovery_expected_net_tp": "2.7657920",
+      "recovery_raw_quantity": "0.1517035062651132116948779952",
+      "recovery_submitted_quantity": "0.152",
+      "remaining_confirmed_debt": "0E-11",
+      "risk_projection": {
+        "projected_stop_loss": "0.84297125000",
+        "quantity": "0.110",
+        "status": "APPROVED"
+      },
+      "spacing_mode": "PRICE_STEP",
+      "spacing_parameter": "5",
+      "stop_mode": "ENTRY_PERCENT",
+      "stop_parameter": "0.0015",
+      "submitted_quantity": "0.110",
+      "valuation_mode": "EXPIRATION",
+      "zone_budget": "2.0"
+    }
+  },
+  "scenario": "stop_reentry_recovery"
+}

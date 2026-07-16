@@ -38,6 +38,7 @@ from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, TradeProposal
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
     InstrumentRules,
+    ExpirationOptionValuation,
     Money,
     Price,
     PriceStepFractionStopConfig,
@@ -98,6 +99,7 @@ class LiveStrategyCoordinator:
         sleeper: Sleep = asyncio.sleep,
         exit_poll_interval_seconds: float = 0.25,
         costs: StrategyCostConfig | None = None,
+        math_engine: StrategyMathEngine | None = None,
     ) -> None:
         if instrument.category != "linear" or instrument.symbol != "ETHUSDT":
             raise ValueError("live coordinator requires ETHUSDT linear")
@@ -135,6 +137,9 @@ class LiveStrategyCoordinator:
         self._sleeper = sleeper
         self._exit_poll_interval_seconds = exit_poll_interval_seconds
         self._costs = costs or StrategyCostConfig()
+        self._math_engine = math_engine or StrategyMathEngine(
+            ExpirationOptionValuation()
+        )
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._pending_levels: set[int] = set()
@@ -221,7 +226,7 @@ class LiveStrategyCoordinator:
                 else LiveHedgeRole.BASELINE
             )
             if role is LiveHedgeRole.BASELINE:
-                sizing = StrategyMathEngine.size_budget(
+                sizing = self._math_engine.size_budget(
                     role="BASELINE",
                     zone_option_loss_budget=Money(level.option_budget),
                     confirmed_recovery_debt=Money(ZERO),

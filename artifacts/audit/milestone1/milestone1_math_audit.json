@@ -1,0 +1,52 @@
+{
+  "active_spacing_mode": "LEVEL_COUNT",
+  "active_stop_mode": "ENTRY_PERCENT",
+  "active_valuation_mode": "EXPIRATION",
+  "cost_fields_and_consumers": {
+    "baseline_buffer_usd": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "entry_fee_rate": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "expected_entry_slippage_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "expected_funding_to_stop_usd_per_eth": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "expected_funding_to_tp_usd_per_eth": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "expected_stop_slippage_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "expected_tp_slippage_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "recovery_buffer_usd": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "spread_cost_entry_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "spread_cost_stop_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "spread_cost_tp_bps": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "stop_fee_rate": "StrategyMathRuntime -> ExecutionCostContext -> sizing",
+    "tp_fee_rate": "StrategyMathRuntime -> ExecutionCostContext -> sizing"
+  },
+  "defects": {
+    "D-001": "CLOSED: explicit price modes and successful/rejected true DELTA_STEP evidence",
+    "D-002": "CLOSED: explicit stop modes; ENTRY_PERCENT remains the approved default",
+    "D-003": "CLOSED: baseline and confirmed-debt recovery include expected costs and quantization",
+    "D-004": "NARROWED: planning and confirmed stop-debt inputs include signed funding; Milestone 2 must implement the authoritative combined ledger"
+  },
+  "golden_fixture_results": "PASS: tests/fixtures/strategy_math fixed values",
+  "integrated_runtime_coverage": [
+    "price_step_zero_cost",
+    "price_step_with_fees",
+    "entry_percent_stop",
+    "price_step_fraction_stop",
+    "stop_reentry_recovery",
+    "quantity_rounding",
+    "equal_option_loss_curved",
+    "delta_step_unavailable",
+    "synthetic_delta_step"
+  ],
+  "milestone2_handoff": "Milestone 2 must implement the authoritative combined option/hedge/funding/slippage ledger and reconcile it from raw fills.",
+  "offline_only": true,
+  "remaining_legacy_formula_callers": [],
+  "scenario_pass": {
+    "delta_step_unavailable": true,
+    "entry_percent_stop": true,
+    "equal_option_loss_curved": true,
+    "price_step_fraction_stop": true,
+    "price_step_with_fees": true,
+    "price_step_zero_cost": true,
+    "quantity_rounding": true,
+    "stop_reentry_recovery": true,
+    "synthetic_delta_step": true
+  }
+}

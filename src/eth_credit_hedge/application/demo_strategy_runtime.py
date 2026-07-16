@@ -71,7 +71,11 @@ from eth_credit_hedge.domain.option_lifecycle import (
 from eth_credit_hedge.domain.option_position import OptionPositionState
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 from eth_credit_hedge.domain.risk import RiskEngine
-from eth_credit_hedge.domain.strategy_math import StopConfig
+from eth_credit_hedge.domain.strategy_math import (
+    ExpirationOptionValuation,
+    StopConfig,
+    StrategyMathEngine,
+)
 from eth_credit_hedge.infrastructure.bybit.auth import BybitV5Signer
 from eth_credit_hedge.infrastructure.bybit.clock import ServerClock
 from eth_credit_hedge.infrastructure.bybit.demo_strategy_close import (
@@ -201,6 +205,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
     preflight = await run_demo_preflight(command)
     deployment = _demo_deployment_profile()
     runtime_config = RuntimeConfig.from_env()
+    math_engine = StrategyMathEngine(ExpirationOptionValuation())
     profile = load_bybit_demo_profile()
     clock = ServerClock(max_absolute_offset_ms=deployment.maximum_clock_drift_ms)
     private = BybitPrivateRestClient(profile=profile, clock=clock)
@@ -353,6 +358,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             clock=now,
             clock_refresh=private.synchronize_clock,
             costs=runtime_config.strategy.costs,
+            math_engine=math_engine,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -452,6 +458,7 @@ async def run_simulated_strategy_command(
         raise ValueError("simulated strategy acceptance requires the run command")
     if level_count <= 0:
         raise ValueError("simulated level count must be positive")
+    math_engine = StrategyMathEngine(ExpirationOptionValuation())
     deployment = _demo_deployment_profile()
     execution_store = execution_store_override or SqliteExecutionStore(
         state_directory / "execution.sqlite3"
@@ -483,7 +490,12 @@ async def run_simulated_strategy_command(
             option_quantity=option.matched_quantity,
             premium_credit=option.actual_net_credit,
         )
-        levels = build_virtual_levels(spread, level_count, stop)
+        levels = build_virtual_levels(
+            spread,
+            level_count,
+            stop,
+            math_engine=math_engine,
+        )
         journal = await DemoRuntimeJournal.create(
             store=journal_store,
             state=DemoRuntimeState(
@@ -570,6 +582,7 @@ async def run_simulated_strategy_command(
                 spread_cost_tp_bps=exchange.config.perp_spread_bps,
                 spread_cost_stop_bps=exchange.config.perp_spread_bps,
             ),
+            math_engine=math_engine,
             extra_task_factory=lambda coordinator: price_driver(
                 coordinator,
                 journal,
@@ -911,6 +924,7 @@ async def _run_supervised_session(
         Callable[[int, ClientOrderRole, int], str] | None
     ) = None,
     costs: StrategyCostConfig | None = None,
+    math_engine: StrategyMathEngine | None = None,
 ) -> None:
     tasks: list[asyncio.Task[None]] = []
 
@@ -926,9 +940,11 @@ async def _run_supervised_session(
                 task.cancel()
 
     risk_engine = RiskEngine()
+    sizing_engine = math_engine or StrategyMathEngine(ExpirationOptionValuation())
     recovery_planner = SameLevelRecoveryPlanner(
         risk_engine,
         costs,
+        sizing_engine,
     )
     entry_gate = _RuntimeEntryGate(kill_switch, private_stream)
     recovery_service = SameLevelRecoveryService(
@@ -995,6 +1011,7 @@ async def _run_supervised_session(
             task_spawner=spawn,
             clock=clock,
             costs=costs,
+            math_engine=sizing_engine,
             entry_gate=entry_gate,
             sleeper=sleeper,
             exit_poll_interval_seconds=exit_poll_interval_seconds,

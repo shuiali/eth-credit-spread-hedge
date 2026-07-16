@@ -11,6 +11,7 @@ from eth_credit_hedge.domain.strategy_math.contracts import (
     LevelMath,
     OptionSpreadState,
     OptionValuationContext,
+    QuantityRoundingMode,
     PriceStepFractionStopConfig,
     SpacingConfig,
     StopConfig,
@@ -138,6 +139,7 @@ class StrategyMathEngine:
         instrument: InstrumentRules,
         *,
         configured_buffer: Money = Money(Decimal("0")),
+        mode: QuantityRoundingMode = QuantityRoundingMode.CEIL,
     ) -> SizingResult:
         return size_hedge(
             role="BASELINE",
@@ -146,6 +148,7 @@ class StrategyMathEngine:
             configured_buffer=configured_buffer,
             costs=costs,
             instrument=instrument,
+            mode=mode,
         )
 
     @staticmethod
@@ -156,6 +159,7 @@ class StrategyMathEngine:
         instrument: InstrumentRules,
         *,
         configured_buffer: Money = Money(Decimal("0")),
+        mode: QuantityRoundingMode = QuantityRoundingMode.CEIL,
     ) -> SizingResult:
         return size_hedge(
             role="RECOVERY",
@@ -164,6 +168,7 @@ class StrategyMathEngine:
             configured_buffer=configured_buffer,
             costs=costs,
             instrument=instrument,
+            mode=mode,
         )
 
     @staticmethod
@@ -175,6 +180,7 @@ class StrategyMathEngine:
         configured_buffer: Money,
         costs: ExecutionCostContext,
         instrument: InstrumentRules,
+        mode: QuantityRoundingMode = QuantityRoundingMode.CEIL,
     ) -> SizingResult:
         if role not in ("BASELINE", "RECOVERY"):
             raise ValueError("sizing role must be BASELINE or RECOVERY")
@@ -185,6 +191,7 @@ class StrategyMathEngine:
             configured_buffer=configured_buffer,
             costs=costs,
             instrument=instrument,
+            mode=mode,
         )
 
 

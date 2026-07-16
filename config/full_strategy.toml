@@ -1,0 +1,39 @@
+[spread]
+short_put_strike = "3000"
+long_put_strike = "2900"
+option_quantity = "0.1"
+
+[strategy_math.spacing]
+mode = "LEVEL_COUNT"
+level_count = 5
+
+[strategy_math.stop]
+mode = "ENTRY_PERCENT"
+entry_stop_rate = "0.0015"
+
+[strategy_math.valuation]
+mode = "EXPIRATION"
+model = "EXPIRATION"
+
+[strategy_math.costs]
+baseline_buffer_usd = "0"
+recovery_buffer_usd = "0"
+entry_fee_rate = "0.0002"
+tp_fee_rate = "0.0002"
+stop_fee_rate = "0.0006"
+expected_entry_slippage_bps = "0.5"
+expected_tp_slippage_bps = "0.5"
+expected_stop_slippage_bps = "1"
+expected_funding_to_tp_usd_per_eth = "-0.01"
+expected_funding_to_stop_usd_per_eth = "-0.01"
+spread_cost_entry_bps = "0.5"
+spread_cost_tp_bps = "0.5"
+spread_cost_stop_bps = "0.5"
+
+[strategy_math.rounding]
+mode = "CEIL"
+quantity_step = "0.001"
+minimum_quantity = "0.001"
+maximum_quantity = "10"
+maximum_notional = "100000"
+maximum_projected_stop_loss = "1000"

@@ -18,6 +18,7 @@ from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, RiskState, TradeProposal
 from eth_credit_hedge.domain.strategy_math import (
     InstrumentRules,
+    ExpirationOptionValuation,
     Money,
     Quantity,
     SizingResult,
@@ -185,9 +186,13 @@ class SameLevelRecoveryPlanner:
         self,
         risk_engine: RiskEngine,
         costs: StrategyCostConfig | None = None,
+        math_engine: StrategyMathEngine | None = None,
     ) -> None:
         self._risk_engine = risk_engine
         self._costs = costs or StrategyCostConfig()
+        self._math_engine = math_engine or StrategyMathEngine(
+            ExpirationOptionValuation()
+        )
 
     def plan(
         self,
@@ -205,7 +210,7 @@ class SameLevelRecoveryPlanner:
             raise ValueError("recovery requires ETHUSDT linear")
         if level.tp_distance <= ZERO:
             raise ValueError("recovery level requires positive TP distance")
-        sizing = StrategyMathEngine.size_budget(
+        sizing = self._math_engine.size_budget(
             role="RECOVERY",
             zone_option_loss_budget=Money(level.option_budget),
             confirmed_recovery_debt=Money(debt.confirmed_debt),

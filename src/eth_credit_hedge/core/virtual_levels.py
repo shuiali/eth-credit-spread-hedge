@@ -30,6 +30,9 @@ from eth_credit_hedge.domain.strategy_math import (
 from eth_credit_hedge.config import StrategyCostConfig
 
 
+_COMPATIBILITY_MATH_ENGINE = StrategyMathEngine(ExpirationOptionValuation())
+
+
 class LevelState(str, Enum):
     READY = "READY"
     ACTIVE = "ACTIVE"
@@ -84,7 +87,7 @@ class HedgeLevel:
     @property
     def initial_quantity(self) -> Decimal:
         costs = StrategyCostConfig()
-        return StrategyMathEngine.size_budget(
+        return _COMPATIBILITY_MATH_ENGINE.size_budget(
             role="BASELINE",
             zone_option_loss_budget=Money(self.option_budget),
             confirmed_recovery_debt=Money(ZERO),
@@ -102,6 +105,8 @@ def build_virtual_levels(
     spread: CreditSpread,
     level_count: int,
     stop: StopConfig | None = None,
+    *,
+    math_engine: StrategyMathEngine | None = None,
 ) -> list[HedgeLevel]:
     """Build runtime boundaries and stops through authoritative strategy math."""
     return _build_stop_levels(
@@ -112,6 +117,7 @@ def build_virtual_levels(
         ),
         LevelCountSpacingConfig(level_count),
         stop or EntryPercentStopConfig(Rate(Decimal("0.0015"))),
+        math_engine=math_engine,
     )
 
 
@@ -161,6 +167,8 @@ def _build_stop_levels(
     spread: OptionSpreadState,
     spacing: SpacingConfig,
     stop: StopConfig,
+    *,
+    math_engine: StrategyMathEngine | None = None,
 ) -> list[HedgeLevel]:
     as_of = datetime(1970, 1, 1, tzinfo=UTC)
     context = OptionValuationContext(
@@ -168,7 +176,8 @@ def _build_stop_levels(
         observed_at_utc=as_of,
         valid_until_utc=as_of,
     )
-    levels = StrategyMathEngine(ExpirationOptionValuation()).build_levels(
+    engine = math_engine or _COMPATIBILITY_MATH_ENGINE
+    levels = engine.build_levels(
         spread,
         context,
         spacing,

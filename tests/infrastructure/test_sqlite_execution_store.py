@@ -121,6 +121,6 @@ def test_option_exit_snapshot_is_restartable_and_versioned(tmp_path: Path) -> No
         )
         await store.transition_option_exit_snapshot(1, closing)
         assert await store.load_option_exit_snapshot("cycle-1") == closing
-        assert await store.schema_version() == 6
+        assert await store.schema_version() == 7
 
     asyncio.run(exercise())

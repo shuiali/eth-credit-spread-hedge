@@ -219,6 +219,7 @@ def test_rejected_recovery_locks_with_option_close_and_sends_no_order(
     )
 
     assert not submission.plan.approved
+    assert submission.plan.expected_take_profit == Decimal("0")
     assert submission.plan.locked_action is LockedLevelAction.CLOSE_OPTION_STRATEGY
     assert submission.entry_snapshot is None
     assert exchange.requests == []
@@ -250,6 +251,7 @@ def test_soft_pause_blocks_recovery_without_allocating_debt(tmp_path: Path) -> N
 
     assert not submission.plan.approved
     assert submission.plan.reasons[-1] == "kill switch blocks new entries"
+    assert submission.plan.expected_take_profit == Decimal("0")
     assert submission.plan.locked_action is None
     assert exchange.requests == []
     assert asyncio.run(store.load_recovery_debt_snapshot(1)) == original

@@ -130,6 +130,7 @@ def test_recovery_risk_rejection_is_explicit_and_allocates_nothing() -> None:
     assert not plan.approved
     assert plan.quantity is None
     assert plan.allocated_debt == Decimal("0")
+    assert plan.expected_take_profit == Decimal("0")
     assert plan.locked_action is LockedLevelAction.CLOSE_OPTION_STRATEGY
     assert "maximum perpetual quantity exceeded" in plan.reasons
 

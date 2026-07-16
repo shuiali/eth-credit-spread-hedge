@@ -20,6 +20,7 @@ from eth_credit_hedge.application.runtime_risk_state import (
 from eth_credit_hedge.application.same_level_recovery import (
     SameLevelRecoveryService,
 )
+from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 from eth_credit_hedge.domain.client_order_ids import ClientOrderRole
 from eth_credit_hedge.domain.execution import LiveExecutionState, PlaceOrderRequest
@@ -36,11 +37,16 @@ from eth_credit_hedge.domain.market_data import TriggerPriceEvent, TriggerPriceS
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, TradeProposal
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
+    InstrumentRules,
+    Money,
     Price,
     PriceStepFractionStopConfig,
+    Quantity,
     Rate,
+    SizingStatus,
     StopGeometryEngine,
     StopMode,
+    StrategyMathEngine,
 )
 from eth_credit_hedge.ports.account import AccountPort
 from eth_credit_hedge.ports.control import EntryGatePort
@@ -91,6 +97,7 @@ class LiveStrategyCoordinator:
         entry_gate: EntryGatePort | None = None,
         sleeper: Sleep = asyncio.sleep,
         exit_poll_interval_seconds: float = 0.25,
+        costs: StrategyCostConfig | None = None,
     ) -> None:
         if instrument.category != "linear" or instrument.symbol != "ETHUSDT":
             raise ValueError("live coordinator requires ETHUSDT linear")
@@ -127,6 +134,7 @@ class LiveStrategyCoordinator:
         self._entry_gate = entry_gate
         self._sleeper = sleeper
         self._exit_poll_interval_seconds = exit_poll_interval_seconds
+        self._costs = costs or StrategyCostConfig()
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._pending_levels: set[int] = set()
@@ -213,11 +221,44 @@ class LiveStrategyCoordinator:
                 else LiveHedgeRole.BASELINE
             )
             if role is LiveHedgeRole.BASELINE:
+                sizing = StrategyMathEngine.size_budget(
+                    role="BASELINE",
+                    zone_option_loss_budget=Money(level.option_budget),
+                    confirmed_recovery_debt=Money(ZERO),
+                    configured_buffer=Money(self._costs.baseline_buffer_usd),
+                    costs=self._costs.execution_context(
+                        entry_price=level.entry_price,
+                        tp_price=level.take_profit_price,
+                        stop_price=level.stop_price,
+                    ),
+                    instrument=InstrumentRules(
+                        quantity_step=Quantity(
+                            self._instrument.lot_size_filter.qty_step
+                        ),
+                        minimum_quantity=Quantity(
+                            self._instrument.lot_size_filter.min_order_qty
+                        ),
+                        maximum_quantity=Quantity(
+                            min(
+                                self._instrument.lot_size_filter.max_order_qty,
+                                self._instrument.lot_size_filter.max_market_order_qty
+                                or self._instrument.lot_size_filter.max_order_qty,
+                                self._risk_limits.maximum_perp_quantity,
+                            )
+                        ),
+                        maximum_notional=Money(
+                            self._risk_limits.maximum_perp_notional
+                        ),
+                        maximum_projected_stop_loss=Money(
+                            self._risk_limits.maximum_projected_stop_loss
+                        ),
+                    ),
+                )
                 quantized = recalculate_quantized_risk(
                     normalize_and_validate_order(
                         self._instrument,
                         side="Sell",
-                        quantity=self._journal.state.option_quantity,
+                        quantity=sizing.submitted_quantity.value,
                         price=level.entry_price,
                         price_policy=PriceQuantizationPolicy.PASSIVE,
                     ),
@@ -225,14 +266,22 @@ class LiveStrategyCoordinator:
                     entry_side="Sell",
                     take_profit_price=level.take_profit_price,
                     stop_price=level.stop_price,
-                    recovery_debt=ZERO,
                     maximum_notional=self._risk_limits.maximum_perp_notional,
                     maximum_projected_stop_loss=(
                         self._risk_limits.maximum_projected_stop_loss
                     ),
                 )
-                if not quantized.accepted:
-                    blocked.append((level.level_id, quantized.errors))
+                sizing_errors = list(quantized.errors)
+                if sizing.status is SizingStatus.REJECTED_BY_RISK:
+                    sizing_errors.append(
+                        "cost-aware baseline sizing rejected by finite risk limit"
+                    )
+                if sizing.undercoverage.value > ZERO:
+                    sizing_errors.append(
+                        "quantized net TP profit undercovers baseline budget"
+                    )
+                if sizing_errors:
+                    blocked.append((level.level_id, tuple(sizing_errors)))
                     continue
                 risk_state = self._risk_builder.build(
                     runtime=self._journal.state,
@@ -259,7 +308,7 @@ class LiveStrategyCoordinator:
                         quantity=quantized.quantity,
                         price=quantized.entry_price,
                         notional=quantized.notional,
-                        projected_stop_loss=quantized.projected_stop_loss,
+                        projected_stop_loss=sizing.projected_net_stop_loss.value,
                         opens_new_level=True,
                     ),
                     risk_state,
@@ -281,6 +330,16 @@ class LiveStrategyCoordinator:
                         "order_link_id": entry_id,
                         "role": role.value,
                         "allocated_debt": "0",
+                        "raw_quantity": str(sizing.raw_quantity.value),
+                        "submitted_quantity": str(sizing.submitted_quantity.value),
+                        "net_tp_profit_per_unit": str(
+                            sizing.net_tp_profit_per_unit.value
+                        ),
+                        "net_stop_loss_per_unit": str(
+                            sizing.net_stop_loss_per_unit.value
+                        ),
+                        "overcoverage": str(sizing.overcoverage.value),
+                        "undercoverage": str(sizing.undercoverage.value),
                         **_geometry_payload(level),
                     },
                 )
@@ -460,6 +519,9 @@ class LiveStrategyCoordinator:
         risk_state: Any,
     ) -> None:
         async def before_submission(plan: Any) -> None:
+            sizing = plan.sizing
+            if sizing is None:
+                raise RuntimeError("recovery plan is missing cost-aware sizing")
             await self._journal.append(
                 JournalEventType.HEDGE_ENTRY_INTENT_CREATED,
                 level_id=level.level_id,
@@ -467,6 +529,16 @@ class LiveStrategyCoordinator:
                     "order_link_id": entry_id,
                     "role": LiveHedgeRole.RECOVERY.value,
                     "allocated_debt": str(plan.allocated_debt),
+                    "raw_quantity": str(sizing.raw_quantity.value),
+                    "submitted_quantity": str(sizing.submitted_quantity.value),
+                    "net_tp_profit_per_unit": str(
+                        sizing.net_tp_profit_per_unit.value
+                    ),
+                    "net_stop_loss_per_unit": str(
+                        sizing.net_stop_loss_per_unit.value
+                    ),
+                    "overcoverage": str(sizing.overcoverage.value),
+                    "undercoverage": str(sizing.undercoverage.value),
                     **_geometry_payload(level),
                 },
             )
@@ -549,6 +621,16 @@ class LiveStrategyCoordinator:
                 payload={
                     "realized_pnl": str(realized),
                     "actual_stop_debt": str(actual_debt),
+                    "price_loss": str(snapshot.stop_price_loss),
+                    "allocated_entry_fees": str(
+                        snapshot.allocated_stop_entry_fees
+                    ),
+                    "stop_fees": str(snapshot.stop_fees),
+                    "funding_pnl": str(snapshot.funding_pnl),
+                    "slippage_versus_reference": str(
+                        snapshot.stop_slippage_versus_reference
+                    ),
+                    "total_debt": str(actual_debt),
                     **_geometry_payload(state_before),
                 },
                 event_id=f"exit:{snapshot.stop_order_link_id}:{snapshot.version}",

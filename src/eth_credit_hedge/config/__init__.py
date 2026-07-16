@@ -5,6 +5,7 @@ from eth_credit_hedge.config.schema import (
     RecoveryMode,
     RuntimeConfig,
     RuntimeEnvironment,
+    StrategyCostConfig,
     StrategyConfig,
 )
 from eth_credit_hedge.domain.strategy_math import StopMode
@@ -15,5 +16,6 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeEnvironment",
     "StrategyConfig",
+    "StrategyCostConfig",
     "StopMode",
 ]

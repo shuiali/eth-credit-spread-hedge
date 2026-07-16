@@ -130,9 +130,10 @@ is selected:
 - bid/ask spread and entry/exit slippage;
 - any explicitly approved cost buffer.
 
-Every rate is dimensionless and nonnegative; every resulting fee, funding,
-slippage, or buffer amount is USD. Milestone 1.4 defines the immutable execution
-cost context and exact allocation rules.
+Every rate is dimensionless and nonnegative; every resulting fee, slippage, or
+buffer amount is USD. Funding is signed P&L: positive means income and negative
+means cost. Milestone 1.4 defines the immutable execution cost context and exact
+allocation rules.
 
 ## Baseline sizing definition
 
@@ -198,10 +199,12 @@ Milestone 1.1 does not choose the following silently:
    defines and tests the valuation port and rejects incomplete or stale model
    inputs; production composition of a concrete market model remains a runtime
    integration decision for Milestone 1.6.
-3. Cost rates, funding horizon, slippage convention, option-cost allocation, and
-   explicit buffer policy; Milestone 1.4 owns them.
-4. The deployment rounding mode and whether undercoverage is rejected or
-   accepted within an explicit tolerance; Milestone 1.4 owns them.
+3. Production cost values and funding horizons remain deployment inputs. The
+   implemented convention uses signed funding P&L, explicit per-leg slippage and
+   spread estimates, and separate baseline/recovery buffers.
+4. Strategy sizing defaults to `CEIL`. Other explicit modes report
+   undercoverage, while finite quantity, notional, and stop-loss violations are
+   rejected without reducing the requested recovery quantity.
 5. Runtime migration, legacy deprecation, and compatibility evidence; Milestones
    1.5 and 1.6 own them.
 

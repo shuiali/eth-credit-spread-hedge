@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS protection_snapshots (
     exit_notional TEXT NOT NULL,
     exit_fees TEXT NOT NULL,
     confirmed_recovery_debt TEXT NOT NULL,
+    stop_price_loss TEXT NOT NULL DEFAULT '0',
+    allocated_stop_entry_fees TEXT NOT NULL DEFAULT '0',
+    stop_fees TEXT NOT NULL DEFAULT '0',
+    funding_pnl TEXT NOT NULL DEFAULT '0',
+    stop_slippage_versus_reference TEXT NOT NULL DEFAULT '0',
     pending_terminal_state TEXT,
     version INTEGER NOT NULL,
     updated_at TEXT NOT NULL
@@ -162,6 +167,9 @@ VALUES (5, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (6, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (7, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -543,6 +551,24 @@ class SqliteExecutionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_MIGRATION)
+            existing = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(protection_snapshots)"
+                ).fetchall()
+            }
+            for column in (
+                "stop_price_loss",
+                "allocated_stop_entry_fees",
+                "stop_fees",
+                "funding_pnl",
+                "stop_slippage_versus_reference",
+            ):
+                if column not in existing:
+                    connection.execute(
+                        f"ALTER TABLE protection_snapshots ADD COLUMN {column} "
+                        "TEXT NOT NULL DEFAULT '0'"
+                    )
 
     def _schema_version(self) -> int:
         with self._connect() as connection:
@@ -895,8 +921,10 @@ class SqliteExecutionStore:
                         tp_order_link_id, tp_order_id, tp_price,
                         tp_filled_quantity, stop_filled_quantity,
                         exit_notional, exit_fees, confirmed_recovery_debt,
+                        stop_price_loss, allocated_stop_entry_fees, stop_fees,
+                        funding_pnl, stop_slippage_versus_reference,
                         pending_terminal_state, version, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     _protection_values(snapshot),
                 )
@@ -1257,6 +1285,8 @@ def _update_protection_snapshot(
             stop_trigger_price = ?, tp_order_link_id = ?, tp_order_id = ?,
             tp_price = ?, tp_filled_quantity = ?, stop_filled_quantity = ?,
             exit_notional = ?, exit_fees = ?, confirmed_recovery_debt = ?,
+            stop_price_loss = ?, allocated_stop_entry_fees = ?, stop_fees = ?,
+            funding_pnl = ?, stop_slippage_versus_reference = ?,
             pending_terminal_state = ?, version = ?, updated_at = ?
         WHERE entry_order_link_id = ? AND version = ?
         """,
@@ -1277,6 +1307,11 @@ def _update_protection_snapshot(
             str(snapshot.exit_notional),
             str(snapshot.exit_fees),
             str(snapshot.confirmed_recovery_debt),
+            str(snapshot.stop_price_loss),
+            str(snapshot.allocated_stop_entry_fees),
+            str(snapshot.stop_fees),
+            str(snapshot.funding_pnl),
+            str(snapshot.stop_slippage_versus_reference),
             (
                 None
                 if snapshot.pending_terminal_state is None
@@ -1408,6 +1443,11 @@ def _protection_values(snapshot: ProtectionSnapshot) -> tuple[object, ...]:
         str(snapshot.exit_notional),
         str(snapshot.exit_fees),
         str(snapshot.confirmed_recovery_debt),
+        str(snapshot.stop_price_loss),
+        str(snapshot.allocated_stop_entry_fees),
+        str(snapshot.stop_fees),
+        str(snapshot.funding_pnl),
+        str(snapshot.stop_slippage_versus_reference),
         (
             None
             if snapshot.pending_terminal_state is None
@@ -1448,6 +1488,15 @@ def _protection_from_row(row: sqlite3.Row) -> ProtectionSnapshot:
         exit_fees=Decimal(str(row["exit_fees"])),
         confirmed_recovery_debt=Decimal(
             str(row["confirmed_recovery_debt"])
+        ),
+        stop_price_loss=Decimal(str(row["stop_price_loss"])),
+        allocated_stop_entry_fees=Decimal(
+            str(row["allocated_stop_entry_fees"])
+        ),
+        stop_fees=Decimal(str(row["stop_fees"])),
+        funding_pnl=Decimal(str(row["funding_pnl"])),
+        stop_slippage_versus_reference=Decimal(
+            str(row["stop_slippage_versus_reference"])
         ),
         pending_terminal_state=(
             None if pending is None else LiveExecutionState(str(pending))

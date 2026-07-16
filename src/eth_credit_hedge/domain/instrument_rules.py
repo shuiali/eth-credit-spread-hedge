@@ -7,6 +7,10 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, ROUND
 from enum import Enum
 
 from eth_credit_hedge.domain.instruments import InstrumentSpec, OrderSide
+from eth_credit_hedge.domain.strategy_math.sizing import (
+    zero_cost_directional_profit_and_loss_per_unit,
+)
+from eth_credit_hedge.domain.strategy_math.units import Price
 
 
 ZERO = Decimal("0")
@@ -173,8 +177,6 @@ class QuantizedRiskResult:
     notional: Decimal
     tp_profit: Decimal
     projected_stop_loss: Decimal
-    recovery_quantity: Decimal
-    recovery_profit: Decimal
     errors: tuple[str, ...]
 
 
@@ -185,7 +187,6 @@ def recalculate_quantized_risk(
     entry_side: OrderSide,
     take_profit_price: Decimal,
     stop_price: Decimal,
-    recovery_debt: Decimal,
     maximum_notional: Decimal,
     maximum_projected_stop_loss: Decimal,
 ) -> QuantizedRiskResult:
@@ -222,23 +223,21 @@ def recalculate_quantized_risk(
         errors.append("normalized take profit is not profitable")
     if stop_distance <= ZERO:
         errors.append("normalized stop is not adverse")
-    profit_per_unit = max(profit_distance, ZERO) * multiplier
-    stop_loss_per_unit = max(stop_distance, ZERO) * multiplier
+    if multiplier != Decimal("1"):
+        raise ValueError("cost-aware ETH sizing requires contract multiplier 1")
+    profit_per_unit = ZERO
+    stop_loss_per_unit = ZERO
+    if profit_distance > ZERO and stop_distance > ZERO:
+        net_tp, net_stop = zero_cost_directional_profit_and_loss_per_unit(
+            entry_price=Price(entry_price),
+            tp_price=Price(normalized_tp),
+            stop_price=Price(normalized_stop),
+            side=entry_side,
+        )
+        profit_per_unit = net_tp.value
+        stop_loss_per_unit = net_stop.value
     tp_profit = profit_per_unit * quantity
     projected_stop_loss = stop_loss_per_unit * quantity
-    debt = _decimal(recovery_debt, "recovery debt")
-    if debt < ZERO:
-        raise ValueError("recovery debt cannot be negative")
-    recovery_quantity = ZERO
-    if debt > ZERO:
-        if profit_per_unit == ZERO:
-            errors.append("recovery profit per unit is zero")
-        else:
-            recovery_quantity = ceil_to_step(
-                debt / profit_per_unit,
-                instrument.lot_size_filter.qty_step,
-            )
-    recovery_profit = recovery_quantity * profit_per_unit
     if notional > _decimal(maximum_notional, "maximum notional"):
         errors.append("normalized notional exceeds risk limit")
     if projected_stop_loss > _decimal(
@@ -255,7 +254,5 @@ def recalculate_quantized_risk(
         notional=notional,
         tp_profit=tp_profit,
         projected_stop_loss=projected_stop_loss,
-        recovery_quantity=recovery_quantity,
-        recovery_profit=recovery_profit,
         errors=tuple(errors),
     )

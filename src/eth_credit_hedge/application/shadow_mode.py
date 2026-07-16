@@ -277,7 +277,6 @@ class ShadowModeService:
             entry_side="Sell",
             take_profit_price=level.tp_price,
             stop_price=level.stop_price,
-            recovery_debt=risk_state.confirmed_recovery_debt,
             maximum_notional=self._risk_limits.maximum_perp_notional,
             maximum_projected_stop_loss=(
                 self._risk_limits.maximum_projected_stop_loss

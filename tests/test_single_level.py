@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
@@ -49,3 +50,18 @@ def test_entry_then_stop_reconciles_exactly() -> None:
     assert level.realized_stop_losses == Decimal("3.00")
     assert level.active_quantity == Decimal("0")
     assert level.state is LevelState.READY
+
+
+def test_runtime_cost_configuration_perturbs_baseline_quantity_and_net_pnl() -> None:
+    engine = HedgeEngine(
+        CreditSpread("3010", "3000", "2980", "1", "20"),
+        level_count=1,
+        stop=PriceStepFractionStopConfig(Rate(Decimal("0.15"))),
+        costs=StrategyCostConfig(entry_fee_rate=Decimal("0.001")),
+    )
+
+    events = engine.run(["3010", "3000", "2980"])
+
+    # Budget 20 / (20 gross TP - 3 entry fee) = 1.176470588... ETH.
+    assert events[0].quantity == Decimal("1.176470588235294118")
+    assert events[1].realized_pnl == Decimal("20.000000000000000006")

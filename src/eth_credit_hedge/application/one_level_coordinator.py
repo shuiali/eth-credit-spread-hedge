@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from eth_credit_hedge.application.one_level_entry import OneLevelEntryService
+from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 from eth_credit_hedge.domain.execution import PlaceOrderRequest
 from eth_credit_hedge.domain.instrument_rules import (
@@ -30,6 +31,13 @@ from eth_credit_hedge.domain.risk import (
     RiskLimits,
     RiskState,
     TradeProposal,
+)
+from eth_credit_hedge.domain.strategy_math import (
+    InstrumentRules,
+    Money,
+    Quantity,
+    SizingStatus,
+    StrategyMathEngine,
 )
 from eth_credit_hedge.ports.control import EntryGatePort
 
@@ -56,6 +64,7 @@ class OneLevelCoordinator:
         risk_limits: RiskLimits,
         order_link_id_factory: Callable[[], str],
         entry_gate: EntryGatePort | None = None,
+        costs: StrategyCostConfig | None = None,
     ) -> None:
         if level.level_id != 1:
             raise ValueError("one-level coordinator requires level 1")
@@ -69,6 +78,7 @@ class OneLevelCoordinator:
         self._risk_limits = risk_limits
         self._order_link_id_factory = order_link_id_factory
         self._entry_gate = entry_gate
+        self._costs = costs or StrategyCostConfig()
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._entry_armed = False
@@ -124,10 +134,44 @@ class OneLevelCoordinator:
         if self._option_position.state is not OptionPositionState.OPEN:
             return OneLevelTriggerResult(False, ("option spread is not OPEN",))
 
+        sizing = StrategyMathEngine.size_budget(
+            role="BASELINE",
+            zone_option_loss_budget=Money(self._level.option_budget),
+            confirmed_recovery_debt=Money(Decimal("0")),
+            configured_buffer=Money(self._costs.baseline_buffer_usd),
+            costs=self._costs.execution_context(
+                entry_price=self._level.entry_price,
+                tp_price=self._level.tp_price,
+                stop_price=self._level.stop_price,
+            ),
+            instrument=InstrumentRules(
+                quantity_step=Quantity(self._instrument.lot_size_filter.qty_step),
+                minimum_quantity=Quantity(
+                    self._instrument.lot_size_filter.min_order_qty
+                ),
+                maximum_quantity=Quantity(
+                    min(
+                        self._instrument.lot_size_filter.max_order_qty,
+                        self._instrument.lot_size_filter.max_market_order_qty
+                        or self._instrument.lot_size_filter.max_order_qty,
+                        self._risk_limits.maximum_perp_quantity,
+                    )
+                ),
+                maximum_notional=Money(self._risk_limits.maximum_perp_notional),
+                maximum_projected_stop_loss=Money(
+                    self._risk_limits.maximum_projected_stop_loss
+                ),
+            ),
+        )
+        if sizing.status is SizingStatus.REJECTED_BY_RISK:
+            return OneLevelTriggerResult(
+                False,
+                ("cost-aware baseline sizing rejected by finite risk limit",),
+            )
         validation = normalize_and_validate_order(
             self._instrument,
             side="Sell",
-            quantity=self._option_position.matched_quantity,
+            quantity=sizing.submitted_quantity.value,
             price=self._level.entry_price,
             price_policy=PriceQuantizationPolicy.PASSIVE,
         )
@@ -137,7 +181,6 @@ class OneLevelCoordinator:
             entry_side="Sell",
             take_profit_price=self._level.tp_price,
             stop_price=self._level.stop_price,
-            recovery_debt=risk_state.confirmed_recovery_debt,
             maximum_notional=self._risk_limits.maximum_perp_notional,
             maximum_projected_stop_loss=(
                 self._risk_limits.maximum_projected_stop_loss
@@ -152,7 +195,7 @@ class OneLevelCoordinator:
             quantity=quantized.quantity,
             price=quantized.entry_price,
             notional=quantized.notional,
-            projected_stop_loss=quantized.projected_stop_loss,
+            projected_stop_loss=sizing.projected_net_stop_loss.value,
             opens_new_level=True,
         )
         decision = self._risk_engine.evaluate(

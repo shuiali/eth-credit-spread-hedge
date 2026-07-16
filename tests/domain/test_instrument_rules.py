@@ -168,7 +168,6 @@ def test_risk_is_recalculated_from_normalized_price_and_quantity() -> None:
         entry_side="Sell",
         take_profit_price=Decimal("2900.04"),
         stop_price=Decimal("3005.06"),
-        recovery_debt=Decimal("0.21"),
         maximum_notional=Decimal("10"),
         maximum_projected_stop_loss=Decimal("1"),
     )
@@ -181,8 +180,6 @@ def test_risk_is_recalculated_from_normalized_price_and_quantity() -> None:
     assert risk.notional == Decimal("6.0002")
     assert risk.tp_profit == Decimal("0.2002")
     assert risk.projected_stop_loss == Decimal("0.0100")
-    assert risk.recovery_quantity == Decimal("0.003")
-    assert risk.recovery_profit == Decimal("0.3003")
 
     rejected = recalculate_quantized_risk(
         validation,
@@ -190,7 +187,6 @@ def test_risk_is_recalculated_from_normalized_price_and_quantity() -> None:
         entry_side="Sell",
         take_profit_price=Decimal("2900.04"),
         stop_price=Decimal("3005.06"),
-        recovery_debt=Decimal("0"),
         maximum_notional=Decimal("6"),
         maximum_projected_stop_loss=Decimal("1"),
     )
@@ -213,7 +209,6 @@ def test_exit_prices_use_explicit_side_aware_policies() -> None:
         entry_side="Buy",
         take_profit_price=Decimal("3100.06"),
         stop_price=Decimal("2995.04"),
-        recovery_debt=Decimal("0"),
         maximum_notional=Decimal("100"),
         maximum_projected_stop_loss=Decimal("1"),
     )
@@ -249,7 +244,6 @@ def test_risk_rejects_exit_prices_on_the_wrong_side_of_entry(
         entry_side=entry_side,
         take_profit_price=take_profit,
         stop_price=stop,
-        recovery_debt=Decimal("0"),
         maximum_notional=Decimal("100"),
         maximum_projected_stop_loss=Decimal("10"),
     )

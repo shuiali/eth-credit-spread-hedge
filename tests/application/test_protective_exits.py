@@ -660,7 +660,15 @@ def test_partial_tp_then_stop_is_idempotent_and_uses_actual_debt(
         assert stopped.pending_terminal_state is LiveExecutionState.CLOSED_STOP
         assert stopped.open_quantity == Decimal("0")
         assert stopped.realized_pnl == Decimal("0.364")
-        assert stopped.confirmed_recovery_debt == Decimal("0.0338")
+        # The earlier TP gain exceeds the stop-side loss, so the completed
+        # attempt has positive actual realized P&L and creates no debt.
+        assert stopped.confirmed_recovery_debt == Decimal("0")
+        assert stopped.stop_price_loss == Decimal("0.030")
+        assert stopped.allocated_stop_entry_fees == Decimal("0.0018")
+        assert stopped.stop_fees == Decimal("0.002")
+        assert stopped.funding_pnl == Decimal("0")
+        assert stopped.stop_slippage_versus_reference == Decimal("0.0030")
+        assert await store.load_protection_snapshot(ENTRY_ID) == stopped
         return stopped
 
     run_service_test(tmp_path, exercise)

@@ -14,6 +14,9 @@ from eth_credit_hedge.domain.market_data import (
 )
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
+    ExecutionCostContext,
+    Money,
+    Price,
     PriceStepFractionStopConfig,
     Rate,
     StopConfig,
@@ -45,6 +48,75 @@ class RuntimeEnvironment(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyCostConfig:
+    """Conservative expected perpetual costs used before order submission."""
+
+    baseline_buffer_usd: Decimal = Decimal("0")
+    recovery_buffer_usd: Decimal = Decimal("0")
+    entry_fee_rate: Decimal = Decimal("0")
+    tp_fee_rate: Decimal = Decimal("0")
+    stop_fee_rate: Decimal = Decimal("0")
+    expected_entry_slippage_bps: Decimal = Decimal("0")
+    expected_tp_slippage_bps: Decimal = Decimal("0")
+    expected_stop_slippage_bps: Decimal = Decimal("0")
+    expected_funding_to_tp_usd_per_eth: Decimal = Decimal("0")
+    expected_funding_to_stop_usd_per_eth: Decimal = Decimal("0")
+    spread_cost_entry_bps: Decimal = Decimal("0")
+    spread_cost_tp_bps: Decimal = Decimal("0")
+    spread_cost_stop_bps: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        for name in self.__dataclass_fields__:
+            value = Decimal(str(getattr(self, name)))
+            if not value.is_finite():
+                raise ValueError(f"{name.replace('_', ' ')} must be finite")
+            if "funding" not in name and value < 0:
+                raise ValueError(f"{name.replace('_', ' ')} cannot be negative")
+            object.__setattr__(self, name, value)
+
+    def execution_context(
+        self,
+        *,
+        entry_price: Decimal,
+        tp_price: Decimal,
+        stop_price: Decimal,
+    ) -> ExecutionCostContext:
+        basis_points = Decimal("10000")
+        return ExecutionCostContext(
+            expected_entry_price=Price(entry_price),
+            expected_tp_price=Price(tp_price),
+            expected_stop_price=Price(stop_price),
+            entry_fee_rate=Rate(self.entry_fee_rate),
+            tp_fee_rate=Rate(self.tp_fee_rate),
+            stop_fee_rate=Rate(self.stop_fee_rate),
+            expected_entry_slippage_per_unit=Money(
+                entry_price * self.expected_entry_slippage_bps / basis_points
+            ),
+            expected_tp_slippage_per_unit=Money(
+                tp_price * self.expected_tp_slippage_bps / basis_points
+            ),
+            expected_stop_slippage_per_unit=Money(
+                stop_price * self.expected_stop_slippage_bps / basis_points
+            ),
+            expected_funding_to_tp_per_unit=Money(
+                self.expected_funding_to_tp_usd_per_eth
+            ),
+            expected_funding_to_stop_per_unit=Money(
+                self.expected_funding_to_stop_usd_per_eth
+            ),
+            spread_cost_entry_per_unit=Money(
+                entry_price * self.spread_cost_entry_bps / basis_points
+            ),
+            spread_cost_tp_per_unit=Money(
+                tp_price * self.spread_cost_tp_bps / basis_points
+            ),
+            spread_cost_stop_per_unit=Money(
+                stop_price * self.spread_cost_stop_bps / basis_points
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyConfig:
     """Validated inputs that control deterministic strategy behavior."""
 
@@ -53,6 +125,7 @@ class StrategyConfig:
     recovery_mode: RecoveryMode
     lock_policy: LockPolicy
     recovery_tp_count: int = 3
+    costs: StrategyCostConfig = field(default_factory=StrategyCostConfig)
 
     def __post_init__(self) -> None:
         if self.level_count <= 0:
@@ -187,6 +260,21 @@ class RuntimeConfig:
                     "ETH_HEDGE_RECOVERY_TP_COUNT",
                     str(baseline.recovery_tp_count),
                 )
+            ),
+            costs=StrategyCostConfig(
+                baseline_buffer_usd=Decimal(values.get("ETH_HEDGE_BASELINE_BUFFER_USD", "0")),
+                recovery_buffer_usd=Decimal(values.get("ETH_HEDGE_RECOVERY_BUFFER_USD", "0")),
+                entry_fee_rate=Decimal(values.get("ETH_HEDGE_ENTRY_FEE_RATE", "0")),
+                tp_fee_rate=Decimal(values.get("ETH_HEDGE_TP_FEE_RATE", "0")),
+                stop_fee_rate=Decimal(values.get("ETH_HEDGE_STOP_FEE_RATE", "0")),
+                expected_entry_slippage_bps=Decimal(values.get("ETH_HEDGE_EXPECTED_ENTRY_SLIPPAGE_BPS", "0")),
+                expected_tp_slippage_bps=Decimal(values.get("ETH_HEDGE_EXPECTED_TP_SLIPPAGE_BPS", "0")),
+                expected_stop_slippage_bps=Decimal(values.get("ETH_HEDGE_EXPECTED_STOP_SLIPPAGE_BPS", "0")),
+                expected_funding_to_tp_usd_per_eth=Decimal(values.get("ETH_HEDGE_EXPECTED_FUNDING_TO_TP_USD_PER_ETH", "0")),
+                expected_funding_to_stop_usd_per_eth=Decimal(values.get("ETH_HEDGE_EXPECTED_FUNDING_TO_STOP_USD_PER_ETH", "0")),
+                spread_cost_entry_bps=Decimal(values.get("ETH_HEDGE_SPREAD_COST_ENTRY_BPS", "0")),
+                spread_cost_tp_bps=Decimal(values.get("ETH_HEDGE_SPREAD_COST_TP_BPS", "0")),
+                spread_cost_stop_bps=Decimal(values.get("ETH_HEDGE_SPREAD_COST_STOP_BPS", "0")),
             ),
         )
         raw_environment = values.get(

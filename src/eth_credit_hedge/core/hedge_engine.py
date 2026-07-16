@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+from typing import Literal
 
-from eth_credit_hedge.config import LockPolicy, RecoveryMode, StrategyConfig
+from eth_credit_hedge.config import (
+    LockPolicy,
+    RecoveryMode,
+    StrategyConfig,
+    StrategyCostConfig,
+)
 from eth_credit_hedge.core.credit_spread import (
     CreditSpread,
     DecimalLike,
@@ -14,8 +20,12 @@ from eth_credit_hedge.core.credit_spread import (
 )
 from eth_credit_hedge.domain.strategy_math import (
     EntryPercentStopConfig,
+    InstrumentRules,
+    Money,
     Rate,
+    SizingStatus,
     StopConfig,
+    StrategyMathEngine,
 )
 from eth_credit_hedge.core.crossing_engine import (
     CrossingEngine,
@@ -47,6 +57,8 @@ class HedgeEngine:
         recovery_tp_count: int = 3,
         lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
         stop: StopConfig | None = None,
+        costs: StrategyCostConfig | None = None,
+        instrument_rules: InstrumentRules | None = None,
     ) -> None:
         selected_stop = stop or EntryPercentStopConfig(Rate(Decimal("0.0015")))
         self.config = StrategyConfig(
@@ -55,6 +67,7 @@ class HedgeEngine:
             recovery_mode=RecoveryMode(recovery_mode),
             lock_policy=LockPolicy(lock_policy),
             recovery_tp_count=recovery_tp_count,
+            costs=costs or StrategyCostConfig(),
         )
         self.spread = spread
         self.levels = build_virtual_levels(
@@ -65,6 +78,7 @@ class HedgeEngine:
         self.recovery_mode = self.config.recovery_mode
         self.recovery_tp_count = self.config.recovery_tp_count
         self.lock_policy = self.config.lock_policy
+        self.instrument_rules = instrument_rules or InstrumentRules.exact()
         self.ledger = Ledger()
         self.crossings = CrossingEngine()
         self.previous_price: Decimal | None = None
@@ -229,10 +243,45 @@ class HedgeEngine:
     def _open(self, level: HedgeLevel, tick_index: int) -> None:
         recovery_allocations = self._recovery_allocations_for(level)
         recovery_target = sum(recovery_allocations.values(), ZERO)
-        quantity = (level.option_budget + recovery_target) / level.tp_distance
-        projected_stop_loss = quantity * level.stop_distance
+        role: Literal["BASELINE", "RECOVERY"] = (
+            "RECOVERY" if recovery_target > ZERO else "BASELINE"
+        )
+        sizing = StrategyMathEngine.size_budget(
+            role=role,
+            zone_option_loss_budget=Money(level.option_budget),
+            confirmed_recovery_debt=Money(recovery_target),
+            configured_buffer=Money(
+                self.config.costs.recovery_buffer_usd
+                if role == "RECOVERY"
+                else self.config.costs.baseline_buffer_usd
+            ),
+            costs=self.config.costs.execution_context(
+                entry_price=level.entry_price,
+                tp_price=level.tp_price,
+                stop_price=level.stop_price,
+            ),
+            instrument=self.instrument_rules,
+        )
+        quantity = sizing.submitted_quantity.value
+        projected_stop_loss = sizing.projected_net_stop_loss.value
+        if sizing.status is SizingStatus.REJECTED_BY_RISK:
+            level.state = LevelState.LOCKED
+            level.entry_armed = False
+            self.ledger.record_locked(
+                level,
+                tick_index,
+                quantity,
+                projected_stop_loss,
+            )
+            return
         if self.used_stop_budget + projected_stop_loss > self.initial_stop_budget:
             if self.lock_policy is LockPolicy.BREAKEVEN_FLOOR:
+                level.active_net_tp_profit_per_unit = (
+                    sizing.net_tp_profit_per_unit.value
+                )
+                level.active_net_stop_loss_per_unit = (
+                    sizing.net_stop_loss_per_unit.value
+                )
                 self._open_floor(
                     level,
                     tick_index,
@@ -255,6 +304,8 @@ class HedgeEngine:
         level.active_is_floor = False
         level.entry_armed = False
         level.active_recovery_allocations = recovery_allocations
+        level.active_net_tp_profit_per_unit = sizing.net_tp_profit_per_unit.value
+        level.active_net_stop_loss_per_unit = sizing.net_stop_loss_per_unit.value
         level.attempts += 1
         level.state = LevelState.ACTIVE
         self.ledger.record_entry(
@@ -266,7 +317,7 @@ class HedgeEngine:
 
     def _take_profit(self, level: HedgeLevel, tick_index: int) -> None:
         quantity = level.active_quantity
-        profit = quantity * level.tp_distance
+        profit = quantity * level.active_net_tp_profit_per_unit
         recovery_allocations = dict(level.active_recovery_allocations)
         recovery_profit = sum(recovery_allocations.values(), ZERO)
         for source_level_id, allocation in recovery_allocations.items():
@@ -283,6 +334,8 @@ class HedgeEngine:
         level.active_is_floor = False
         level.entry_armed = False
         level.active_recovery_allocations = {}
+        level.active_net_tp_profit_per_unit = ZERO
+        level.active_net_stop_loss_per_unit = ZERO
         level.state = LevelState.PAID
         self.ledger.record_tp(
             level,
@@ -298,7 +351,7 @@ class HedgeEngine:
         if level.active_is_floor:
             raise AssertionError("floor hedge cannot execute a fixed stop")
         quantity = level.active_quantity
-        loss = quantity * level.stop_distance
+        loss = quantity * level.active_net_stop_loss_per_unit
         level.realized_stop_losses += loss
         level.stop_loss_history.append(loss)
         level.recovery_debt += loss
@@ -309,6 +362,8 @@ class HedgeEngine:
             level.recovery_tps_remaining = self.recovery_tp_count
         level.active_quantity = ZERO
         level.active_recovery_allocations = {}
+        level.active_net_tp_profit_per_unit = ZERO
+        level.active_net_stop_loss_per_unit = ZERO
         level.state = LevelState.READY
         level.entry_armed = True
         self.ledger.record_stop(level, tick_index, quantity, loss)

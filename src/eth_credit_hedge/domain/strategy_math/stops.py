@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
+from typing import Literal
 
 from eth_credit_hedge.domain.strategy_math.contracts import (
     EntryPercentStopConfig,
@@ -14,11 +16,14 @@ from eth_credit_hedge.domain.strategy_math.contracts import (
     StopConfig,
 )
 from eth_credit_hedge.domain.strategy_math.errors import InvalidConfigurationError
+from eth_credit_hedge.domain.strategy_math.costs import ExecutionCostContext
+from eth_credit_hedge.domain.strategy_math.quantization import InstrumentRules
+from eth_credit_hedge.domain.strategy_math.sizing import SizingResult, size_hedge
 from eth_credit_hedge.domain.strategy_math.spacing import (
     LevelSpacingEngine,
     SpacingLevel,
 )
-from eth_credit_hedge.domain.strategy_math.units import Price
+from eth_credit_hedge.domain.strategy_math.units import Money, Price
 from eth_credit_hedge.domain.strategy_math.valuation import OptionValuationPort
 
 
@@ -124,6 +129,62 @@ class StrategyMathEngine:
             spacing_levels,
             stop,
             maximum_stop_price=maximum_stop_price,
+        )
+
+    @staticmethod
+    def size_baseline(
+        level: LevelMath,
+        costs: ExecutionCostContext,
+        instrument: InstrumentRules,
+        *,
+        configured_buffer: Money = Money(Decimal("0")),
+    ) -> SizingResult:
+        return size_hedge(
+            role="BASELINE",
+            zone_option_loss_budget=level.zone_option_loss_budget,
+            confirmed_recovery_debt=Money(Decimal("0")),
+            configured_buffer=configured_buffer,
+            costs=costs,
+            instrument=instrument,
+        )
+
+    @staticmethod
+    def size_recovery(
+        level: LevelMath,
+        confirmed_debt: Money,
+        costs: ExecutionCostContext,
+        instrument: InstrumentRules,
+        *,
+        configured_buffer: Money = Money(Decimal("0")),
+    ) -> SizingResult:
+        return size_hedge(
+            role="RECOVERY",
+            zone_option_loss_budget=level.zone_option_loss_budget,
+            confirmed_recovery_debt=confirmed_debt,
+            configured_buffer=configured_buffer,
+            costs=costs,
+            instrument=instrument,
+        )
+
+    @staticmethod
+    def size_budget(
+        *,
+        role: Literal["BASELINE", "RECOVERY"],
+        zone_option_loss_budget: Money,
+        confirmed_recovery_debt: Money,
+        configured_buffer: Money,
+        costs: ExecutionCostContext,
+        instrument: InstrumentRules,
+    ) -> SizingResult:
+        if role not in ("BASELINE", "RECOVERY"):
+            raise ValueError("sizing role must be BASELINE or RECOVERY")
+        return size_hedge(
+            role=role,
+            zone_option_loss_budget=zone_option_loss_budget,
+            confirmed_recovery_debt=confirmed_recovery_debt,
+            configured_buffer=configured_buffer,
+            costs=costs,
+            instrument=instrument,
         )
 
 

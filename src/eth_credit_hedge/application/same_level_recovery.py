@@ -126,6 +126,7 @@ class SameLevelRecoveryService:
                 plan,
                 approved=False,
                 quantity=None,
+                expected_take_profit=Decimal("0"),
                 allocated_debt=Decimal("0"),
                 reasons=plan.reasons + ("kill switch blocks new entries",),
                 locked_action=None,

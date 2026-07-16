@@ -15,6 +15,12 @@ from eth_credit_hedge.domain.execution import (
     ExecutionUpdate,
     LiveExecutionState,
 )
+from eth_credit_hedge.domain.strategy_math import (
+    Money,
+    Price,
+    Quantity,
+    calculate_actual_stop_debt,
+)
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
 
 
@@ -76,6 +82,11 @@ class ProtectionSnapshot:
     pending_terminal_state: LiveExecutionState | None
     version: int
     updated_at: datetime
+    stop_price_loss: Decimal = ZERO
+    allocated_stop_entry_fees: Decimal = ZERO
+    stop_fees: Decimal = ZERO
+    funding_pnl: Decimal = ZERO
+    stop_slippage_versus_reference: Decimal = ZERO
 
     def __post_init__(self) -> None:
         _role(self.entry_order_link_id, ClientOrderRole.HEDGE_ENTRY)
@@ -96,6 +107,10 @@ class ProtectionSnapshot:
             "exit_notional",
             "exit_fees",
             "confirmed_recovery_debt",
+            "allocated_stop_entry_fees",
+            "stop_fees",
+            "funding_pnl",
+            "stop_slippage_versus_reference",
         ):
             object.__setattr__(
                 self,
@@ -114,6 +129,9 @@ class ProtectionSnapshot:
             "exit_notional",
             "exit_fees",
             "confirmed_recovery_debt",
+            "stop_price_loss",
+            "allocated_stop_entry_fees",
+            "stop_fees",
         ):
             if getattr(self, field_name) < ZERO:
                 raise ValueError(f"{field_name.replace('_', ' ')} cannot be negative")
@@ -172,6 +190,7 @@ class ProtectionSnapshot:
             - self.exit_notional
             - allocated_entry_fees
             - self.exit_fees
+            + self.funding_pnl
         )
 
     @classmethod
@@ -309,6 +328,7 @@ def apply_exit_execution(
     execution: ExecutionUpdate,
     *,
     updated_at: datetime,
+    funding_pnl: Decimal = ZERO,
 ) -> ProtectionSnapshot:
     if execution.symbol != "ETHUSDT" or execution.side != "Buy":
         raise ValueError("protective execution must be an ETHUSDT Buy")
@@ -326,17 +346,31 @@ def apply_exit_execution(
     tp_filled = snapshot.tp_filled_quantity
     stop_filled = snapshot.stop_filled_quantity
     debt = snapshot.confirmed_recovery_debt
+    stop_price_loss = snapshot.stop_price_loss
+    allocated_stop_entry_fees = snapshot.allocated_stop_entry_fees
+    stop_fees = snapshot.stop_fees
+    accumulated_funding = snapshot.funding_pnl
+    stop_slippage = snapshot.stop_slippage_versus_reference
     if is_stop:
         stop_filled += execution.quantity
         allocated_entry_fee = (
             snapshot.entry_fees * execution.quantity / snapshot.entry_quantity
         )
-        debt += max(
-            (execution.price - snapshot.average_entry_price) * execution.quantity
-            + allocated_entry_fee
-            + execution.fee,
-            ZERO,
+        actual = calculate_actual_stop_debt(
+            entry_price=Price(snapshot.average_entry_price),
+            stop_fill_price=Price(execution.price),
+            stop_reference_price=Price(snapshot.stop_trigger_price),
+            quantity=Quantity(execution.quantity),
+            allocated_entry_fees=Money(allocated_entry_fee),
+            stop_fees=Money(execution.fee),
+            funding_pnl=Money(funding_pnl),
         )
+        debt += actual.total_debt.value
+        stop_price_loss += actual.price_loss.value
+        allocated_stop_entry_fees += actual.allocated_entry_fees.value
+        stop_fees += actual.stop_fees.value
+        accumulated_funding += actual.funding_pnl.value
+        stop_slippage += actual.slippage_versus_reference.value
     else:
         tp_filled += execution.quantity
     pending_terminal = None
@@ -348,7 +382,7 @@ def apply_exit_execution(
             else LiveExecutionState.CLOSED_TP
         )
         state = LiveExecutionState.CANCEL_PENDING
-    return replace(
+    updated = replace(
         snapshot,
         state=state,
         open_quantity=open_quantity,
@@ -358,10 +392,21 @@ def apply_exit_execution(
         + execution.price * execution.quantity,
         exit_fees=snapshot.exit_fees + execution.fee,
         confirmed_recovery_debt=debt,
+        stop_price_loss=stop_price_loss,
+        allocated_stop_entry_fees=allocated_stop_entry_fees,
+        stop_fees=stop_fees,
+        funding_pnl=accumulated_funding,
+        stop_slippage_versus_reference=stop_slippage,
         pending_terminal_state=pending_terminal,
         version=snapshot.version + 1,
         updated_at=updated_at,
     )
+    if is_stop and open_quantity == ZERO:
+        return replace(
+            updated,
+            confirmed_recovery_debt=max(-updated.realized_pnl, ZERO),
+        )
+    return updated
 
 
 def apply_emergency_exit_execution(
@@ -370,6 +415,7 @@ def apply_emergency_exit_execution(
     *,
     updated_at: datetime,
     allocated_quantity: Decimal | None = None,
+    funding_pnl: Decimal = ZERO,
 ) -> ProtectionSnapshot:
     entry_id = ClientOrderId.parse(snapshot.entry_order_link_id)
     close_id = ClientOrderId.parse(execution.order_link_id)
@@ -394,13 +440,16 @@ def apply_emergency_exit_execution(
         snapshot.entry_fees * quantity / snapshot.entry_quantity
     )
     allocated_exit_fee = execution.fee * quantity / execution.quantity
-    debt = max(
-        (execution.price - snapshot.average_entry_price) * quantity
-        + allocated_entry_fee
-        + allocated_exit_fee,
-        ZERO,
+    actual = calculate_actual_stop_debt(
+        entry_price=Price(snapshot.average_entry_price),
+        stop_fill_price=Price(execution.price),
+        stop_reference_price=Price(snapshot.stop_trigger_price),
+        quantity=Quantity(quantity),
+        allocated_entry_fees=Money(allocated_entry_fee),
+        stop_fees=Money(allocated_exit_fee),
+        funding_pnl=Money(funding_pnl),
     )
-    return replace(
+    updated = replace(
         snapshot,
         state=LiveExecutionState.ERROR,
         open_quantity=snapshot.open_quantity - quantity,
@@ -408,11 +457,30 @@ def apply_emergency_exit_execution(
         exit_notional=snapshot.exit_notional
         + execution.price * quantity,
         exit_fees=snapshot.exit_fees + allocated_exit_fee,
-        confirmed_recovery_debt=snapshot.confirmed_recovery_debt + debt,
+        confirmed_recovery_debt=(
+            snapshot.confirmed_recovery_debt + actual.total_debt.value
+        ),
+        stop_price_loss=snapshot.stop_price_loss + actual.price_loss.value,
+        allocated_stop_entry_fees=(
+            snapshot.allocated_stop_entry_fees
+            + actual.allocated_entry_fees.value
+        ),
+        stop_fees=snapshot.stop_fees + actual.stop_fees.value,
+        funding_pnl=snapshot.funding_pnl + actual.funding_pnl.value,
+        stop_slippage_versus_reference=(
+            snapshot.stop_slippage_versus_reference
+            + actual.slippage_versus_reference.value
+        ),
         pending_terminal_state=None,
         version=snapshot.version + 1,
         updated_at=updated_at,
     )
+    if updated.open_quantity == ZERO:
+        return replace(
+            updated,
+            confirmed_recovery_debt=max(-updated.realized_pnl, ZERO),
+        )
+    return updated
 
 
 def confirm_exit_reconciliation(

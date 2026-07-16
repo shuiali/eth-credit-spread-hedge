@@ -8,14 +8,22 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 from eth_credit_hedge.core.virtual_levels import HedgeLevel
+from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.domain.instrument_rules import (
     PriceQuantizationPolicy,
-    ceil_to_step,
     normalize_and_validate_order,
     recalculate_quantized_risk,
 )
 from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, RiskState, TradeProposal
+from eth_credit_hedge.domain.strategy_math import (
+    InstrumentRules,
+    Money,
+    Quantity,
+    SizingResult,
+    SizingStatus,
+    StrategyMathEngine,
+)
 
 
 ZERO = Decimal("0")
@@ -167,13 +175,19 @@ class RecoveryEntryPlan:
     allocated_debt: Decimal
     reasons: tuple[str, ...]
     locked_action: LockedLevelAction | None
+    sizing: SizingResult | None = None
 
 
 class SameLevelRecoveryPlanner:
     """Plan local FULL_NEXT_TP recovery; no cross-level allocation exists here."""
 
-    def __init__(self, risk_engine: RiskEngine) -> None:
+    def __init__(
+        self,
+        risk_engine: RiskEngine,
+        costs: StrategyCostConfig | None = None,
+    ) -> None:
         self._risk_engine = risk_engine
+        self._costs = costs or StrategyCostConfig()
 
     def plan(
         self,
@@ -191,17 +205,37 @@ class SameLevelRecoveryPlanner:
             raise ValueError("recovery requires ETHUSDT linear")
         if level.tp_distance <= ZERO:
             raise ValueError("recovery level requires positive TP distance")
-        raw_desired = (
-            level.option_budget + debt.confirmed_debt
-        ) / level.tp_distance
-        rounded_up = ceil_to_step(
-            raw_desired,
-            instrument.lot_size_filter.qty_step,
+        sizing = StrategyMathEngine.size_budget(
+            role="RECOVERY",
+            zone_option_loss_budget=Money(level.option_budget),
+            confirmed_recovery_debt=Money(debt.confirmed_debt),
+            configured_buffer=Money(self._costs.recovery_buffer_usd),
+            costs=self._costs.execution_context(
+                entry_price=level.entry_price,
+                tp_price=level.tp_price,
+                stop_price=level.stop_price,
+            ),
+            instrument=InstrumentRules(
+                quantity_step=Quantity(instrument.lot_size_filter.qty_step),
+                minimum_quantity=Quantity(instrument.lot_size_filter.min_order_qty),
+                maximum_quantity=Quantity(
+                    min(
+                        instrument.lot_size_filter.max_order_qty,
+                        instrument.lot_size_filter.max_market_order_qty
+                        or instrument.lot_size_filter.max_order_qty,
+                        limits.maximum_perp_quantity,
+                    )
+                ),
+                maximum_notional=Money(limits.maximum_perp_notional),
+                maximum_projected_stop_loss=Money(
+                    limits.maximum_projected_stop_loss
+                ),
+            ),
         )
         validation = normalize_and_validate_order(
             instrument,
             side="Sell",
-            quantity=rounded_up,
+            quantity=sizing.submitted_quantity.value,
             price=level.entry_price,
             price_policy=PriceQuantizationPolicy.PASSIVE,
         )
@@ -211,16 +245,25 @@ class SameLevelRecoveryPlanner:
             entry_side="Sell",
             take_profit_price=level.tp_price,
             stop_price=level.stop_price,
-            recovery_debt=debt.confirmed_debt,
             maximum_notional=limits.maximum_perp_notional,
             maximum_projected_stop_loss=limits.maximum_projected_stop_loss,
         )
         reasons = list(quantized.errors)
-        required_profit = level.option_budget + debt.confirmed_debt
-        if quantized.tp_profit < required_profit:
-            reasons.append(
-                "quantized TP profit does not cover zone budget and confirmed debt"
-            )
+        if sizing.status is SizingStatus.REJECTED_BY_RISK:
+            if sizing.submitted_quantity.value > limits.maximum_perp_quantity:
+                reasons.append("maximum perpetual quantity exceeded")
+            if (
+                sizing.submitted_quantity.value * level.entry_price
+                > limits.maximum_perp_notional
+            ):
+                reasons.append("normalized notional exceeds risk limit")
+            if (
+                sizing.projected_net_stop_loss.value
+                > limits.maximum_projected_stop_loss
+            ):
+                reasons.append("normalized stop loss exceeds risk limit")
+        if sizing.undercoverage.value > ZERO:
+            reasons.append("quantized net TP profit undercovers required recovery budget")
         if not reasons:
             decision = self._risk_engine.evaluate(
                 TradeProposal(
@@ -229,7 +272,7 @@ class SameLevelRecoveryPlanner:
                     quantity=quantized.quantity,
                     price=quantized.entry_price,
                     notional=quantized.notional,
-                    projected_stop_loss=quantized.projected_stop_loss,
+                    projected_stop_loss=sizing.projected_net_stop_loss.value,
                     opens_new_level=True,
                 ),
                 risk_state,
@@ -239,13 +282,16 @@ class SameLevelRecoveryPlanner:
         approved = not reasons
         return RecoveryEntryPlan(
             approved=approved,
-            raw_desired_quantity=raw_desired,
+            raw_desired_quantity=sizing.raw_quantity.value,
             entry_price=quantized.entry_price,
             quantity=quantized.quantity if approved else None,
-            expected_take_profit=quantized.tp_profit,
+            expected_take_profit=(
+                sizing.expected_net_tp_profit.value if approved else ZERO
+            ),
             allocated_debt=debt.confirmed_debt if approved else ZERO,
             reasons=tuple(reasons),
             locked_action=(
                 None if approved else LockedLevelAction.CLOSE_OPTION_STRATEGY
             ),
+            sizing=sizing,
         )

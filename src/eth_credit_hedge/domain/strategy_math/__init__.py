@@ -35,6 +35,26 @@ from eth_credit_hedge.domain.strategy_math.errors import (
     StrategyMathError,
     UnsupportedValuationError,
 )
+from eth_credit_hedge.domain.strategy_math.costs import (
+    CostBreakdown,
+    ExecutionCostContext,
+    calculate_cost_breakdown,
+)
+from eth_credit_hedge.domain.strategy_math.quantization import (
+    InstrumentRules,
+    quantize_quantity,
+)
+from eth_credit_hedge.domain.strategy_math.recovery import (
+    ActualStopDebt,
+    calculate_actual_stop_debt,
+)
+from eth_credit_hedge.domain.strategy_math.sizing import (
+    SizingResult,
+    SizingStatus,
+    net_profit_and_loss_per_unit,
+    size_hedge,
+    zero_cost_directional_profit_and_loss_per_unit,
+)
 from eth_credit_hedge.domain.strategy_math.units import (
     DeltaExposure,
     Money,
@@ -59,14 +79,18 @@ from eth_credit_hedge.domain.strategy_math.valuation import (
 )
 
 __all__ = [
+    "ActualStopDebt",
+    "CostBreakdown",
     "CoverageResult",
     "DeltaExposure",
     "DeltaSpacingUnavailableError",
     "DeltaStepSpacingConfig",
     "EntryPercentStopConfig",
+    "ExecutionCostContext",
     "EqualOptionLossSpacingConfig",
     "InvalidConfigurationError",
     "InvalidUnitsError",
+    "InstrumentRules",
     "LevelCountSpacingConfig",
     "LevelMath",
     "LevelSpacingMode",
@@ -89,6 +113,8 @@ __all__ = [
     "Seconds",
     "SpacingConfig",
     "SpacingLevel",
+    "SizingResult",
+    "SizingStatus",
     "StopConfig",
     "StopGeometryEngine",
     "StopMode",
@@ -102,6 +128,12 @@ __all__ = [
     "parse_stop_configuration",
     "require_valuation_context",
     "solve_monotonic_price",
+    "calculate_actual_stop_debt",
+    "calculate_cost_breakdown",
+    "quantize_quantity",
+    "net_profit_and_loss_per_unit",
+    "size_hedge",
+    "zero_cost_directional_profit_and_loss_per_unit",
     "validate_spacing_configuration_fields",
     "validate_stop_configuration_fields",
 ]

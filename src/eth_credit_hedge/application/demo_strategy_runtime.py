@@ -43,7 +43,7 @@ from eth_credit_hedge.application.read_only_reconciliation import (
 from eth_credit_hedge.application.runtime_risk_state import RuntimeRiskStateBuilder
 from eth_credit_hedge.application.same_level_recovery import SameLevelRecoveryService
 from eth_credit_hedge.config.bybit import load_bybit_demo_profile
-from eth_credit_hedge.config.schema import RuntimeConfig
+from eth_credit_hedge.config.schema import RuntimeConfig, StrategyCostConfig
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.virtual_levels import build_virtual_levels
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
@@ -352,6 +352,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             logger=logger,
             clock=now,
             clock_refresh=private.synchronize_clock,
+            costs=runtime_config.strategy.costs,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -559,6 +560,16 @@ async def run_simulated_strategy_command(
             clock=lambda: exchange.current_time_utc,
             sleeper=yield_only,
             exit_poll_interval_seconds=0,
+            costs=StrategyCostConfig(
+                entry_fee_rate=exchange.config.taker_fee_rate,
+                tp_fee_rate=exchange.config.maker_fee_rate,
+                stop_fee_rate=exchange.config.taker_fee_rate,
+                expected_entry_slippage_bps=exchange.config.entry_slippage_bps,
+                expected_stop_slippage_bps=exchange.config.stop_slippage_bps,
+                spread_cost_entry_bps=exchange.config.perp_spread_bps,
+                spread_cost_tp_bps=exchange.config.perp_spread_bps,
+                spread_cost_stop_bps=exchange.config.perp_spread_bps,
+            ),
             extra_task_factory=lambda coordinator: price_driver(
                 coordinator,
                 journal,
@@ -899,6 +910,7 @@ async def _run_supervised_session(
     order_link_id_factory: (
         Callable[[int, ClientOrderRole, int], str] | None
     ) = None,
+    costs: StrategyCostConfig | None = None,
 ) -> None:
     tasks: list[asyncio.Task[None]] = []
 
@@ -914,7 +926,10 @@ async def _run_supervised_session(
                 task.cancel()
 
     risk_engine = RiskEngine()
-    recovery_planner = SameLevelRecoveryPlanner(risk_engine)
+    recovery_planner = SameLevelRecoveryPlanner(
+        risk_engine,
+        costs,
+    )
     entry_gate = _RuntimeEntryGate(kill_switch, private_stream)
     recovery_service = SameLevelRecoveryService(
         entry_service=OneLevelEntryService(
@@ -979,6 +994,7 @@ async def _run_supervised_session(
             ),
             task_spawner=spawn,
             clock=clock,
+            costs=costs,
             entry_gate=entry_gate,
             sleeper=sleeper,
             exit_poll_interval_seconds=exit_poll_interval_seconds,

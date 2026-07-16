@@ -24,12 +24,15 @@ from eth_credit_hedge.domain.strategy_math import (
     Price,
     PriceStepSpacingConfig,
     Quantity,
+    InstrumentRules,
+    Money,
     Rate,
     SpacingConfig,
     StopConfig,
     StopMode,
     StrategyMathEngine,
 )
+from eth_credit_hedge.config import StrategyCostConfig
 
 
 class LevelState(str, Enum):
@@ -60,6 +63,8 @@ class HedgeLevel:
     realized_tp_profit: Decimal = ZERO
     stop_loss_history: list[Decimal] = field(default_factory=list)
     active_recovery_allocations: dict[int, Decimal] = field(default_factory=dict)
+    active_net_tp_profit_per_unit: Decimal = ZERO
+    active_net_stop_loss_per_unit: Decimal = ZERO
 
     def __post_init__(self) -> None:
         if self.entry_price <= self.tp_price:
@@ -83,7 +88,19 @@ class HedgeLevel:
 
     @property
     def initial_quantity(self) -> Decimal:
-        return self.option_budget / self.tp_distance
+        costs = StrategyCostConfig()
+        return StrategyMathEngine.size_budget(
+            role="BASELINE",
+            zone_option_loss_budget=Money(self.option_budget),
+            confirmed_recovery_debt=Money(ZERO),
+            configured_buffer=Money(ZERO),
+            costs=costs.execution_context(
+                entry_price=self.entry_price,
+                tp_price=self.tp_price,
+                stop_price=self.stop_price,
+            ),
+            instrument=InstrumentRules.exact(),
+        ).submitted_quantity.value
 
 
 class LegacyPriceStepLevelGenerator:

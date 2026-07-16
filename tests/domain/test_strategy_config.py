@@ -10,6 +10,7 @@ from eth_credit_hedge.config import (
     RuntimeConfig,
     RuntimeEnvironment,
     StrategyConfig,
+    StrategyCostConfig,
 )
 from eth_credit_hedge.domain.market_data import TriggerPriceSource
 from eth_credit_hedge.domain.strategy_math import (
@@ -145,3 +146,46 @@ def test_mixed_stop_environment_parameters_are_rejected() -> None:
                 "ETH_HEDGE_PRICE_STEP_STOP_FRACTION": "0.15",
             }
         )
+def test_all_cost_configuration_fields_reach_execution_context() -> None:
+    runtime = RuntimeConfig.from_env(
+        {
+            "ETH_HEDGE_BASELINE_BUFFER_USD": "1",
+            "ETH_HEDGE_RECOVERY_BUFFER_USD": "2",
+            "ETH_HEDGE_ENTRY_FEE_RATE": "0.001",
+            "ETH_HEDGE_TP_FEE_RATE": "0.002",
+            "ETH_HEDGE_STOP_FEE_RATE": "0.003",
+            "ETH_HEDGE_EXPECTED_ENTRY_SLIPPAGE_BPS": "1",
+            "ETH_HEDGE_EXPECTED_TP_SLIPPAGE_BPS": "2",
+            "ETH_HEDGE_EXPECTED_STOP_SLIPPAGE_BPS": "3",
+            "ETH_HEDGE_EXPECTED_FUNDING_TO_TP_USD_PER_ETH": "0.4",
+            "ETH_HEDGE_EXPECTED_FUNDING_TO_STOP_USD_PER_ETH": "-0.5",
+            "ETH_HEDGE_SPREAD_COST_ENTRY_BPS": "4",
+            "ETH_HEDGE_SPREAD_COST_TP_BPS": "5",
+            "ETH_HEDGE_SPREAD_COST_STOP_BPS": "6",
+        }
+    )
+    costs = runtime.strategy.costs
+    context = costs.execution_context(
+        entry_price=Decimal("3000"),
+        tp_price=Decimal("2900"),
+        stop_price=Decimal("3100"),
+    )
+
+    assert costs.baseline_buffer_usd == Decimal("1")
+    assert costs.recovery_buffer_usd == Decimal("2")
+    assert context.entry_fee_rate.value == Decimal("0.001")
+    assert context.tp_fee_rate.value == Decimal("0.002")
+    assert context.stop_fee_rate.value == Decimal("0.003")
+    assert context.expected_entry_slippage_per_unit.value == Decimal("0.3")
+    assert context.expected_tp_slippage_per_unit.value == Decimal("0.58")
+    assert context.expected_stop_slippage_per_unit.value == Decimal("0.93")
+    assert context.expected_funding_to_tp_per_unit.value == Decimal("0.4")
+    assert context.expected_funding_to_stop_per_unit.value == Decimal("-0.5")
+    assert context.spread_cost_entry_per_unit.value == Decimal("1.2")
+    assert context.spread_cost_tp_per_unit.value == Decimal("1.45")
+    assert context.spread_cost_stop_per_unit.value == Decimal("1.86")
+
+
+def test_cost_configuration_rejects_negative_non_funding_values() -> None:
+    with pytest.raises(ValueError, match="entry fee rate cannot be negative"):
+        StrategyCostConfig(entry_fee_rate=Decimal("-0.01"))

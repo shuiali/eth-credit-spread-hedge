@@ -71,6 +71,7 @@ from eth_credit_hedge.domain.option_lifecycle import (
 from eth_credit_hedge.domain.option_position import OptionPositionState
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
 from eth_credit_hedge.domain.risk import RiskEngine
+from eth_credit_hedge.domain.strategy_math import StopConfig
 from eth_credit_hedge.infrastructure.bybit.auth import BybitV5Signer
 from eth_credit_hedge.infrastructure.bybit.clock import ServerClock
 from eth_credit_hedge.infrastructure.bybit.demo_strategy_close import (
@@ -440,6 +441,7 @@ async def run_simulated_strategy_command(
         Coroutine[Any, Any, None],
     ],
     level_count: int = 1,
+    stop: StopConfig | None = None,
     preserve_state_on_timeout: bool = False,
     execution_store_override: SqliteExecutionStore | None = None,
 ) -> dict[str, object]:
@@ -480,7 +482,7 @@ async def run_simulated_strategy_command(
             option_quantity=option.matched_quantity,
             premium_credit=option.actual_net_credit,
         )
-        levels = build_virtual_levels(spread, level_count, Decimal("0.15"))
+        levels = build_virtual_levels(spread, level_count, stop)
         journal = await DemoRuntimeJournal.create(
             store=journal_store,
             state=DemoRuntimeState(
@@ -737,7 +739,7 @@ async def _open_new_cycle(
     levels = build_virtual_levels(
         spread,
         runtime_config.strategy.level_count,
-        runtime_config.strategy.stop_rate,
+        runtime_config.strategy.stop,
     )
     journal = await DemoRuntimeJournal.create(
         store=journal_store,

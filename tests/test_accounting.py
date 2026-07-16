@@ -7,12 +7,17 @@ from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
 from eth_credit_hedge.core.virtual_levels import LevelState
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
+
+
+PRICE_STEP_STOP = PriceStepFractionStopConfig(Rate(Decimal("0.15")))
 
 
 def make_engine(premium: str = "30") -> HedgeEngine:
     return HedgeEngine(
         CreditSpread("3010", "3000", "2900", "1", premium),
         level_count=5,
+        stop=PRICE_STEP_STOP,
     )
 
 
@@ -77,6 +82,7 @@ def test_breakeven_floor_policy_prevents_the_unhedged_locked_zone_loss() -> None
         CreditSpread("3010", "3000", "2900", "1", "10"),
         level_count=5,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
+        stop=PRICE_STEP_STOP,
     )
     result = engine.run_with_accounting(
         ["3010", "3000", "3003", "3000", "3003", "3000", "2890"]
@@ -97,6 +103,7 @@ def test_floor_hedge_exits_at_breakeven_and_can_reenter_without_more_debt() -> N
         CreditSpread("3010", "3000", "2980", "1", "10"),
         level_count=1,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
+        stop=PRICE_STEP_STOP,
     )
     result = engine.run_with_accounting(
         [

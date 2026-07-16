@@ -6,12 +6,17 @@ from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
 from eth_credit_hedge.core.virtual_levels import LevelState
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
+
+
+PRICE_STEP_STOP = PriceStepFractionStopConfig(Rate(Decimal("0.15")))
 
 
 def make_engine() -> HedgeEngine:
     return HedgeEngine(
         CreditSpread("3010", "3000", "2980", "1", "20"),
         level_count=1,
+        stop=PRICE_STEP_STOP,
     )
 
 
@@ -66,7 +71,8 @@ def test_two_stops_then_tp_recovers_to_original_zone_budget() -> None:
 def test_premium_budget_locks_the_first_unaffordable_attempt() -> None:
     engine = HedgeEngine(
         CreditSpread("3010", "3000", "2980", "1", "10"),
-        level_count=1,
+            level_count=1,
+            stop=PRICE_STEP_STOP,
     )
     events = engine.run(["3010", "3000", "3003", "3000", "3003", "3000", "2980"])
     level = engine.levels[0]
@@ -95,6 +101,7 @@ def test_projected_stop_equal_to_budget_is_allowed() -> None:
     engine = HedgeEngine(
         CreditSpread("3010", "3000", "2980", "1", "10.4175"),
         level_count=1,
+        stop=PRICE_STEP_STOP,
     )
     events = engine.run(["3010", "3000", "3003", "3000", "3003", "3000"])
 

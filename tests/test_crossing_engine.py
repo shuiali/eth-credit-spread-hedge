@@ -74,3 +74,44 @@ def test_upward_stop_executes_at_exact_trigger() -> None:
     strategy.states[1] = "ACTIVE"
     events = CrossingEngine().process_transition("2995", "3004.50", strategy)
     assert event_summary(events) == [("STOP", 1, Decimal("3004.50"))]
+
+
+class SharedPriceStrategy:
+    def __init__(self) -> None:
+        self.states = {1: "ACTIVE", 2: "READY"}
+        self.state_seen_at_stop: dict[int, str] | None = None
+
+    def eligible_crossings(
+        self, previous: Decimal, current: Decimal, direction: Direction
+    ) -> list[CrossingEvent]:
+        del previous, current, direction
+        events: list[CrossingEvent] = []
+        if self.states[1] == "ACTIVE":
+            events.append(
+                CrossingEvent(CrossingEventType.STOP, 1, Decimal("3000"), 99)
+            )
+        if self.states[2] == "READY":
+            events.append(
+                CrossingEvent(CrossingEventType.ENTRY, 2, Decimal("3000"), -99)
+            )
+        return events
+
+    def execute_crossing(self, event: CrossingEvent, tick_index: int) -> None:
+        del tick_index
+        if event.event_type is CrossingEventType.STOP:
+            self.state_seen_at_stop = dict(self.states)
+            self.states[event.level_id] = "READY"
+        else:
+            self.states[event.level_id] = "ACTIVE"
+
+
+def test_exit_precedes_entry_at_shared_price_and_states_are_isolated() -> None:
+    strategy = SharedPriceStrategy()
+    events = CrossingEngine().process_transition("2999", "3001", strategy)
+
+    assert event_summary(events) == [
+        ("STOP", 1, Decimal("3000")),
+        ("ENTRY", 2, Decimal("3000")),
+    ]
+    assert strategy.state_seen_at_stop == {1: "ACTIVE", 2: "READY"}
+    assert strategy.states == {1: "READY", 2: "ACTIVE"}

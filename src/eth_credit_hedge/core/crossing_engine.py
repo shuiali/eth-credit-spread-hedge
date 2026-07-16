@@ -101,8 +101,23 @@ class CrossingEngine:
         if direction is Direction.DOWN:
             return sorted(
                 candidates,
-                key=lambda event: (-event.price, event.priority, event.level_id),
+                key=lambda event: (
+                    -event.price,
+                    CrossingEngine._event_type_priority(event),
+                    event.priority,
+                    event.level_id,
+                ),
             )[0]
         return sorted(
-            candidates, key=lambda event: (event.price, event.priority, event.level_id)
+            candidates,
+            key=lambda event: (
+                event.price,
+                CrossingEngine._event_type_priority(event),
+                event.priority,
+                event.level_id,
+            ),
         )[0]
+
+    @staticmethod
+    def _event_type_priority(event: CrossingEvent) -> int:
+        return 1 if event.event_type is CrossingEventType.ENTRY else 0

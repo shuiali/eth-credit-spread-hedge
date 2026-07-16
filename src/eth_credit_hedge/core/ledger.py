@@ -10,6 +10,7 @@ from enum import Enum
 from eth_credit_hedge.core.credit_spread import ZERO
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
+from eth_credit_hedge.domain.strategy_math import LevelSpacingMode, StopMode
 
 
 class LedgerEventType(str, Enum):
@@ -32,15 +33,19 @@ class LedgerEvent:
     realized_pnl: Decimal
     level_state: LevelState
     attempt: int
+    spacing_mode: LevelSpacingMode = LevelSpacingMode.PRICE_STEP
+    stop_mode: StopMode = StopMode.ENTRY_PERCENT
+    stop_parameter: Decimal = Decimal("0.0015")
+    stop_distance: Decimal = ZERO
     projected_stop_loss: Decimal = ZERO
     zone_profit_component: Decimal = ZERO
     recovery_profit_component: Decimal = ZERO
     recovery_allocations: dict[int, Decimal] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
-        """Return the stable version-one persistence representation."""
+        """Return the stable version-two persistence representation."""
         return {
-            "event_version": 1,
+            "event_version": 2,
             "sequence": self.sequence,
             "tick_index": self.tick_index,
             "event_type": self.event_type.value,
@@ -50,6 +55,10 @@ class LedgerEvent:
             "realized_pnl": str(self.realized_pnl),
             "level_state": self.level_state.value,
             "attempt": self.attempt,
+            "spacing_mode": self.spacing_mode.value,
+            "stop_mode": self.stop_mode.value,
+            "stop_parameter": str(self.stop_parameter),
+            "stop_distance": str(self.stop_distance),
             "projected_stop_loss": str(self.projected_stop_loss),
             "zone_profit_component": str(self.zone_profit_component),
             "recovery_profit_component": str(self.recovery_profit_component),
@@ -87,6 +96,9 @@ class LevelSnapshot:
     tp_price: Decimal
     stop_price: Decimal
     option_budget: Decimal
+    spacing_mode: LevelSpacingMode
+    stop_mode: StopMode
+    stop_parameter: Decimal
     state: LevelState
     attempts: int
     active_quantity: Decimal
@@ -305,6 +317,9 @@ class Ledger:
                 tp_price=level.tp_price,
                 stop_price=level.stop_price,
                 option_budget=level.option_budget,
+                spacing_mode=level.spacing_mode,
+                stop_mode=level.stop_mode,
+                stop_parameter=level.stop_parameter,
                 state=level.state,
                 attempts=level.attempts,
                 active_quantity=level.active_quantity,
@@ -394,6 +409,10 @@ class Ledger:
             realized_pnl=realized_pnl,
             level_state=level.state,
             attempt=level.attempts,
+            spacing_mode=level.spacing_mode,
+            stop_mode=level.stop_mode,
+            stop_parameter=level.stop_parameter,
+            stop_distance=level.stop_distance,
             projected_stop_loss=projected_stop_loss,
             zone_profit_component=zone_profit_component,
             recovery_profit_component=recovery_profit_component,

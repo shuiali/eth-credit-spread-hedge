@@ -34,6 +34,14 @@ from eth_credit_hedge.domain.journal import JournalEventType
 from eth_credit_hedge.domain.live_recovery import SameLevelRecoveryPlanner
 from eth_credit_hedge.domain.market_data import TriggerPriceEvent, TriggerPriceSource
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, TradeProposal
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    Price,
+    PriceStepFractionStopConfig,
+    Rate,
+    StopGeometryEngine,
+    StopMode,
+)
 from eth_credit_hedge.ports.account import AccountPort
 from eth_credit_hedge.ports.control import EntryGatePort
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
@@ -81,21 +89,26 @@ class LiveStrategyCoordinator:
         task_spawner: _TaskSpawner,
         clock: Callable[[], datetime],
         entry_gate: EntryGatePort | None = None,
-        stop_rate: Decimal = Decimal("0.15"),
         sleeper: Sleep = asyncio.sleep,
         exit_poll_interval_seconds: float = 0.25,
     ) -> None:
         if instrument.category != "linear" or instrument.symbol != "ETHUSDT":
             raise ValueError("live coordinator requires ETHUSDT linear")
-        stop_step_ratio = Decimal(stop_rate)
-        if stop_step_ratio <= ZERO:
-            raise ValueError("stop rate must be positive")
-        if any(
-            level.stop_price - level.entry_price
-            != (level.entry_price - level.take_profit_price) * stop_step_ratio
-            for level in journal.state.levels
-        ):
-            raise ValueError("level stop distance must equal the configured delta ratio")
+        for level in journal.state.levels:
+            stop = (
+                EntryPercentStopConfig(Rate(level.stop_parameter))
+                if level.stop_mode is StopMode.ENTRY_PERCENT
+                else PriceStepFractionStopConfig(Rate(level.stop_parameter))
+            )
+            expected = StopGeometryEngine.stop_price(
+                Price(level.entry_price),
+                Price(level.entry_price - level.take_profit_price),
+                stop,
+            )
+            if level.stop_price != expected.value:
+                raise ValueError(
+                    "level stop distance does not match its explicit stop mode"
+                )
         if exit_poll_interval_seconds < 0:
             raise ValueError("exit poll interval cannot be negative")
         self._journal = journal
@@ -268,6 +281,7 @@ class LiveStrategyCoordinator:
                         "order_link_id": entry_id,
                         "role": role.value,
                         "allocated_debt": "0",
+                        **_geometry_payload(level),
                     },
                 )
                 request = PlaceOrderRequest(
@@ -453,6 +467,7 @@ class LiveStrategyCoordinator:
                     "order_link_id": entry_id,
                     "role": LiveHedgeRole.RECOVERY.value,
                     "allocated_debt": str(plan.allocated_debt),
+                    **_geometry_payload(level),
                 },
             )
 
@@ -534,6 +549,7 @@ class LiveStrategyCoordinator:
                 payload={
                     "realized_pnl": str(realized),
                     "actual_stop_debt": str(actual_debt),
+                    **_geometry_payload(state_before),
                 },
                 event_id=f"exit:{snapshot.stop_order_link_id}:{snapshot.version}",
             )
@@ -554,6 +570,7 @@ class LiveStrategyCoordinator:
             payload={
                 "realized_pnl": str(realized),
                 "remaining_debt": str(remaining_debt),
+                **_geometry_payload(state_before),
             },
             event_id=f"exit:{snapshot.tp_order_link_id}:{snapshot.version}",
         )
@@ -566,12 +583,35 @@ def _hedge_level(level: Any) -> HedgeLevel:
         tp_price=level.take_profit_price,
         stop_price=level.stop_price,
         option_budget=level.option_budget,
+        spacing_mode=level.spacing_mode,
+        stop_mode=level.stop_mode,
+        stop_parameter=level.stop_parameter,
         state=level.state,
         attempts=level.attempts,
         active_quantity=level.active_quantity,
         entry_armed=level.armed,
         recovery_debt=level.confirmed_debt,
     )
+
+
+def _geometry_payload(level: Any) -> dict[str, str]:
+    take_profit_price = (
+        level.take_profit_price
+        if hasattr(level, "take_profit_price")
+        else level.tp_price
+    )
+    return {
+        "entry_price": str(level.entry_price),
+        "take_profit_price": str(take_profit_price),
+        "take_profit_distance": str(
+            level.entry_price - take_profit_price
+        ),
+        "spacing_mode": level.spacing_mode.value,
+        "stop_price": str(level.stop_price),
+        "stop_distance": str(level.stop_price - level.entry_price),
+        "stop_mode": level.stop_mode.value,
+        "stop_parameter": str(level.stop_parameter),
+    }
 
 
 __all__ = ["LiveStrategyCoordinator", "LiveTriggerResult"]

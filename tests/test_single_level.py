@@ -6,11 +6,16 @@ from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
 from eth_credit_hedge.core.virtual_levels import LevelState
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
 
 
 def make_engine() -> HedgeEngine:
     spread = CreditSpread("3010", "3000", "2980", "1", "20")
-    return HedgeEngine(spread, level_count=1)
+    return HedgeEngine(
+        spread,
+        level_count=1,
+        stop=PriceStepFractionStopConfig(Rate(Decimal("0.15"))),
+    )
 
 
 def test_entry_then_tp_reconciles_exactly() -> None:

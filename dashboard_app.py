@@ -101,7 +101,7 @@ def main() -> None:
         recovery_mode=strategy.recovery_mode,
         recovery_tp_count=strategy.recovery_tp_count,
         lock_policy=strategy.lock_policy,
-        stop_rate=strategy.stop_rate,
+        stop=strategy.stop,
     ).run_with_accounting(list(prices))
     monte_carlo = None
     if args.mc_paths:
@@ -113,7 +113,7 @@ def main() -> None:
             recovery_mode=strategy.recovery_mode,
             recovery_tp_count=strategy.recovery_tp_count,
             lock_policy=strategy.lock_policy,
-            stop_rate=strategy.stop_rate,
+            stop=strategy.stop,
         )
     payload = build_dashboard_payload(
         spread,

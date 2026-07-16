@@ -23,9 +23,10 @@ No manual `PYTHONPATH` setting is required.
 ## Configuration
 
 `StrategyConfig.baseline()` freezes `FULL_NEXT_TP`, `UNHEDGED`, and the
-`0.15` stop-to-delta ratio. `StrategyConfig.experimental_floor()` is deliberately
-separate. `RuntimeConfig` rejects experimental recovery or lock policies for
-demo, shadow, and production environments.
+explicit `ENTRY_PERCENT` stop at `0.0015` of entry.
+`StrategyConfig.experimental_floor()` is deliberately separate. `RuntimeConfig`
+rejects experimental recovery or lock policies for demo, shadow, and production
+environments.
 
 `RuntimeConfig.from_env()` reads the `ETH_HEDGE_*` variables documented in
 `.env.example` into one immutable object. M0 does not read or use private Bybit
@@ -33,9 +34,10 @@ credentials.
 
 ## Event persistence contract
 
-`LedgerEvent.to_dict()` and `LedgerEvent.to_json()` emit version-one events.
+`LedgerEvent.to_dict()` and `LedgerEvent.to_json()` emit version-two events.
 All `Decimal` values are serialized as strings, enum values are explicit, and
-recovery-allocation keys are emitted in stable order.
+recovery-allocation keys are emitted in stable order. Version two adds spacing
+mode, stop mode, stop parameter, and actual stop distance.
 
 ## Baseline history
 

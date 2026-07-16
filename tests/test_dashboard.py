@@ -48,6 +48,17 @@ def make_payload():
     )
 
 
+def test_dashboard_reports_unambiguous_stop_geometry_labels() -> None:
+    spread = CreditSpread("3010", "3000", "2900", "1", "30")
+    result = HedgeEngine(spread, 5).run_with_accounting(["3010", "3000"])
+    payload = build_dashboard_payload(spread, result)
+    rows = {label: value for label, value, _ in payload.kpi_rows}
+
+    assert rows["Stop mode"] == "ENTRY_PERCENT"
+    assert rows["Stop parameter"] == "0.15% of entry"
+    assert rows["Stop distance"] == "$4.50"
+
+
 def test_dashboard_module_contains_no_strategy_or_backtest_dependency() -> None:
     source = inspect.getsource(dashboard_module)
 

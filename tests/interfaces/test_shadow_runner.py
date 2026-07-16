@@ -89,12 +89,12 @@ def state() -> RiskState:
     )
 
 
-def test_mainnet_shadow_levels_link_entry_tp_and_stop_to_one_delta() -> None:
+def test_mainnet_shadow_levels_use_entry_percent_stops() -> None:
     levels = _shadow_levels(instrument(), Decimal("3000"))
 
     for current, following in zip(levels, levels[1:]):
         assert current.entry_price - following.entry_price == current.tp_distance
-        assert current.stop_distance == current.tp_distance * Decimal("0.15")
+        assert current.stop_distance == current.entry_price * Decimal("0.0015")
 
 
 def trade(price: str, sequence: int) -> TradeEvent:

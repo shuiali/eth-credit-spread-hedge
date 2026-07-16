@@ -9,6 +9,7 @@ from enum import Enum
 
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 from eth_credit_hedge.domain.journal import JournalEvent, JournalEventType
+from eth_credit_hedge.domain.strategy_math import LevelSpacingMode, StopMode
 
 
 ZERO = Decimal("0")
@@ -26,6 +27,10 @@ class DemoLevelRuntimeState:
     take_profit_price: Decimal
     stop_price: Decimal
     option_budget: Decimal
+    take_profit_distance: Decimal | None = None
+    spacing_mode: LevelSpacingMode = LevelSpacingMode.PRICE_STEP
+    stop_mode: StopMode = StopMode.ENTRY_PERCENT
+    stop_parameter: Decimal = Decimal("0.0015")
     state: LevelState = LevelState.READY
     armed: bool = False
     connection_generation: int | None = None
@@ -61,6 +66,22 @@ class DemoLevelRuntimeState:
             raise ValueError("entry price must exceed take-profit price")
         if self.stop_price <= self.entry_price:
             raise ValueError("stop price must exceed entry price")
+        take_profit_distance = (
+            self.entry_price - self.take_profit_price
+            if self.take_profit_distance is None
+            else Decimal(self.take_profit_distance)
+        )
+        if take_profit_distance != self.entry_price - self.take_profit_price:
+            raise ValueError("take-profit distance must equal entry minus take profit")
+        object.__setattr__(self, "take_profit_distance", take_profit_distance)
+        object.__setattr__(
+            self, "spacing_mode", LevelSpacingMode.parse(self.spacing_mode)
+        )
+        object.__setattr__(self, "stop_mode", StopMode.parse(self.stop_mode))
+        stop_parameter = Decimal(self.stop_parameter)
+        if not stop_parameter.is_finite() or stop_parameter <= ZERO:
+            raise ValueError("stop parameter must be positive and finite")
+        object.__setattr__(self, "stop_parameter", stop_parameter)
         if self.option_budget <= ZERO:
             raise ValueError("option budget must be positive")
         if self.confirmed_debt < ZERO or self.allocated_debt < ZERO:
@@ -106,6 +127,10 @@ class DemoLevelRuntimeState:
             take_profit_price=level.tp_price,
             stop_price=level.stop_price,
             option_budget=level.option_budget,
+            take_profit_distance=level.tp_distance,
+            spacing_mode=level.spacing_mode,
+            stop_mode=level.stop_mode,
+            stop_parameter=level.stop_parameter,
         )
 
 
@@ -354,6 +379,10 @@ def demo_runtime_state_to_payload(state: DemoRuntimeState) -> dict[str, object]:
                 "take_profit_price": str(level.take_profit_price),
                 "stop_price": str(level.stop_price),
                 "option_budget": str(level.option_budget),
+                "take_profit_distance": str(level.take_profit_distance),
+                "spacing_mode": level.spacing_mode.value,
+                "stop_mode": level.stop_mode.value,
+                "stop_parameter": str(level.stop_parameter),
                 "state": level.state.value,
                 "armed": level.armed,
                 "connection_generation": level.connection_generation,
@@ -449,6 +478,18 @@ def _level_from_payload(raw: object) -> DemoLevelRuntimeState:
         take_profit_price=_decimal(raw, "take_profit_price"),
         stop_price=_decimal(raw, "stop_price"),
         option_budget=_decimal(raw, "option_budget"),
+        take_profit_distance=(
+            None
+            if raw.get("take_profit_distance") is None
+            else _decimal(raw, "take_profit_distance")
+        ),
+        spacing_mode=LevelSpacingMode(
+            str(raw.get("spacing_mode", LevelSpacingMode.PRICE_STEP.value))
+        ),
+        stop_mode=StopMode(
+            str(raw.get("stop_mode", StopMode.ENTRY_PERCENT.value))
+        ),
+        stop_parameter=Decimal(str(raw.get("stop_parameter", "0.0015"))),
         state=LevelState(_required_text(raw, "state")),
         armed=bool(raw.get("armed", False)),
         connection_generation=(

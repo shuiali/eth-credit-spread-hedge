@@ -6,7 +6,8 @@ hedge before exchange execution is introduced. The reference configuration is:
 ```text
 RecoveryMode.FULL_NEXT_TP
 LockPolicy.UNHEDGED
-stop_rate = 0.15 of one delta step
+StopMode.ENTRY_PERCENT
+entry_stop_rate = 0.0015 of entry price
 ```
 
 All monetary, price, and quantity calculations use `Decimal`.
@@ -35,8 +36,8 @@ zone_width    = (K_short - K_long) / N
 entry_i       = K_short - (i - 1) * zone_width
 tp_i          = K_short - i * zone_width
 option_budget = q * (entry_i - tp_i)
-delta_i       = entry_i - tp_i
-stop_i        = entry_i + 0.15 * delta_i
+price_step_i  = entry_i - tp_i
+stop_i        = entry_i + 0.0015 * entry_i
 ```
 
 No virtual level exists below the long-put strike.
@@ -55,6 +56,10 @@ hedges.
 
 When a downward segment reaches a boundary shared by one level's take-profit
 and the next level's entry, the take-profit is processed first.
+
+`PRICE_STEP_FRACTION` remains an explicit alternate strategy. It uses
+`stop_i = entry_i + price_step_i * fraction`; it is never selected by
+interpreting the entry-percent parameter differently.
 
 ## Full-next-TP recovery
 

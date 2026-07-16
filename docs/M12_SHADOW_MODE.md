@@ -37,7 +37,7 @@ argument.
 
 ## Live mainnet shadow acceptance
 
-Status: LINKED-DELTA REVALIDATION PASSED (2026-07-16).
+Status: LINKED-PRICE-STEP REVALIDATION PASSED (2026-07-16).
 
 - The mainnet-bound public runner accepted on attempt 1 and recorded two
   normalized ETHUSDT trade observations with one risk-approved crossing intent.
@@ -57,11 +57,11 @@ Status: LINKED-DELTA REVALIDATION PASSED (2026-07-16).
   were used.
 
 Review decision: M12 passed for the original captured geometry. The 2026-07-16
-linked-delta geometry is revalidated separately below. Production pilot mutation
+linked-price-step geometry is revalidated separately below. Production pilot mutation
 remains disabled until finite-limit and pilot configuration approval,
 legal/account eligibility and signed operator approval are recorded separately.
 
-## Linked-delta shadow revalidation
+## Linked-price-step shadow revalidation
 
 - The corrected shadow geometry used 0.10 USDT between virtual entries, the same
   0.10 USDT TP distance, and a 0.015 USDT stop distance.
@@ -75,6 +75,6 @@ legal/account eligibility and signed operator approval are recorded separately.
 - The runner confirmed `external_order_mutations_enabled=false` and
   `trading_adapter_constructed=false`.
 
-Review decision: linked-delta M12 passes. Pilot mutation remains disabled on the
+Review decision: linked-price-step M12 passes. Pilot mutation remains disabled on the
 remaining demo burn-in, finite-limit, configuration, eligibility, and signed
 operator gates.

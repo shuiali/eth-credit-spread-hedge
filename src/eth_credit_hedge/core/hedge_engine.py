@@ -12,6 +12,11 @@ from eth_credit_hedge.core.credit_spread import (
     ZERO,
     to_decimal,
 )
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    Rate,
+    StopConfig,
+)
 from eth_credit_hedge.core.crossing_engine import (
     CrossingEngine,
     CrossingEvent,
@@ -41,11 +46,12 @@ class HedgeEngine:
         recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
         recovery_tp_count: int = 3,
         lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
-        stop_rate: DecimalLike = "0.15",
+        stop: StopConfig | None = None,
     ) -> None:
+        selected_stop = stop or EntryPercentStopConfig(Rate(Decimal("0.0015")))
         self.config = StrategyConfig(
             level_count=level_count,
-            stop_rate=to_decimal(stop_rate),
+            stop=selected_stop,
             recovery_mode=RecoveryMode(recovery_mode),
             lock_policy=LockPolicy(lock_policy),
             recovery_tp_count=recovery_tp_count,
@@ -54,7 +60,7 @@ class HedgeEngine:
         self.levels = build_virtual_levels(
             spread,
             self.config.level_count,
-            self.config.stop_rate,
+            self.config.stop,
         )
         self.recovery_mode = self.config.recovery_mode
         self.recovery_tp_count = self.config.recovery_tp_count

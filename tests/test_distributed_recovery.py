@@ -6,6 +6,7 @@ from eth_credit_hedge.config import RecoveryMode
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
 
 
 def make_engine(mode: RecoveryMode) -> HedgeEngine:
@@ -14,6 +15,7 @@ def make_engine(mode: RecoveryMode) -> HedgeEngine:
         level_count=5,
         recovery_mode=mode,
         recovery_tp_count=3,
+        stop=PriceStepFractionStopConfig(Rate(Decimal("0.15"))),
     )
 
 

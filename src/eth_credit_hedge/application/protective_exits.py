@@ -33,6 +33,12 @@ from eth_credit_hedge.domain.protected_execution import (
     mark_protection_reconciling,
     replace_stop_intent,
 )
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    Price,
+    Rate,
+    StopGeometryEngine,
+)
 from eth_credit_hedge.ports.account import AccountPort
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
 from eth_credit_hedge.ports.trading import TradingPort
@@ -84,7 +90,11 @@ class ProtectiveExitService:
         if average_price is None:
             raise ValueError("entry has no confirmed average price")
         trigger_price = quantize_limit_price(
-            average_price * (Decimal("1") + stop_rate),
+            StopGeometryEngine.stop_price(
+                Price(average_price),
+                Price(instrument.price_filter.tick_size),
+                EntryPercentStopConfig(Rate(stop_rate)),
+            ).value,
             instrument.price_filter.tick_size,
             side="Buy",
             policy=PriceQuantizationPolicy.AGGRESSIVE,
@@ -199,7 +209,11 @@ class ProtectiveExitService:
         if stop_rate <= 0:
             raise ValueError("stop rate must be positive")
         trigger_price = quantize_limit_price(
-            snapshot.average_entry_price * (Decimal("1") + stop_rate),
+            StopGeometryEngine.stop_price(
+                Price(snapshot.average_entry_price),
+                Price(instrument.price_filter.tick_size),
+                EntryPercentStopConfig(Rate(stop_rate)),
+            ).value,
             instrument.price_filter.tick_size,
             side="Buy",
             policy=PriceQuantizationPolicy.AGGRESSIVE,

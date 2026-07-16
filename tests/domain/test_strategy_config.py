@@ -12,6 +12,12 @@ from eth_credit_hedge.config import (
     StrategyConfig,
 )
 from eth_credit_hedge.domain.market_data import TriggerPriceSource
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    PriceStepFractionStopConfig,
+    Rate,
+    StopMode,
+)
 
 
 def test_baseline_factory_freezes_validated_strategy_defaults() -> None:
@@ -19,7 +25,7 @@ def test_baseline_factory_freezes_validated_strategy_defaults() -> None:
 
     assert config == StrategyConfig(
         level_count=5,
-        stop_rate=Decimal("0.15"),
+        stop=EntryPercentStopConfig(Rate(Decimal("0.0015"))),
         recovery_mode=RecoveryMode.FULL_NEXT_TP,
         lock_policy=LockPolicy.UNHEDGED,
         recovery_tp_count=3,
@@ -39,7 +45,6 @@ def test_experimental_floor_requires_an_explicit_factory() -> None:
     ("overrides", "message"),
     [
         ({"level_count": 0}, "level count"),
-        ({"stop_rate": "0"}, "stop rate"),
         ({"recovery_tp_count": 0}, "recovery TP count"),
     ],
 )
@@ -48,7 +53,7 @@ def test_strategy_config_rejects_invalid_values(
 ) -> None:
     values: dict[str, object] = {
         "level_count": 1,
-        "stop_rate": "0.15",
+        "stop": EntryPercentStopConfig(Rate(Decimal("0.0015"))),
         "recovery_mode": RecoveryMode.FULL_NEXT_TP,
         "lock_policy": LockPolicy.UNHEDGED,
         "recovery_tp_count": 3,
@@ -79,7 +84,8 @@ def test_runtime_config_parses_environment_mapping_once() -> None:
         {
             "ETH_HEDGE_ENVIRONMENT": "demo",
             "ETH_HEDGE_LEVEL_COUNT": "4",
-            "ETH_HEDGE_STOP_RATE": "0.15",
+            "ETH_HEDGE_STOP_MODE": "ENTRY_PERCENT",
+            "ETH_HEDGE_ENTRY_STOP_RATE": "0.0015",
             "ETH_HEDGE_RECOVERY_MODE": "FULL_NEXT_TP",
             "ETH_HEDGE_LOCK_POLICY": "UNHEDGED",
             "ETH_HEDGE_RECOVERY_TP_COUNT": "3",
@@ -88,6 +94,7 @@ def test_runtime_config_parses_environment_mapping_once() -> None:
 
     assert config.environment is RuntimeEnvironment.DEMO
     assert config.strategy == StrategyConfig.baseline(level_count=4)
+    assert config.strategy.stop_mode is StopMode.ENTRY_PERCENT
     assert config.trigger_price_source is TriggerPriceSource.LAST_TRADE
 
 
@@ -106,3 +113,35 @@ def test_plan_seven_environment_names_and_legacy_aliases_are_stable() -> None:
     assert RuntimeConfig.from_env(
         {"ETH_HEDGE_ENVIRONMENT": "LOCAL_SIMULATED"}
     ).environment is RuntimeEnvironment.LOCAL_SIMULATED
+
+
+def test_runtime_config_parses_price_step_fraction_stop() -> None:
+    config = RuntimeConfig.from_env(
+        {
+            "ETH_HEDGE_STOP_MODE": "PRICE_STEP_FRACTION",
+            "ETH_HEDGE_PRICE_STEP_STOP_FRACTION": "0.15",
+        }
+    )
+
+    assert config.strategy.stop == PriceStepFractionStopConfig(
+        Rate(Decimal("0.15"))
+    )
+
+
+def test_ambiguous_legacy_stop_environment_key_is_rejected() -> None:
+    with pytest.raises(
+        ValueError,
+        match="ENTRY_PERCENT.*PRICE_STEP_FRACTION",
+    ):
+        RuntimeConfig.from_env({"ETH_HEDGE_STOP_RATE": "0.15"})
+
+
+def test_mixed_stop_environment_parameters_are_rejected() -> None:
+    with pytest.raises(ValueError, match="unexpected price_step_stop_fraction"):
+        RuntimeConfig.from_env(
+            {
+                "ETH_HEDGE_STOP_MODE": "ENTRY_PERCENT",
+                "ETH_HEDGE_ENTRY_STOP_RATE": "0.0015",
+                "ETH_HEDGE_PRICE_STEP_STOP_FRACTION": "0.15",
+            }
+        )

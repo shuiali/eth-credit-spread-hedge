@@ -12,6 +12,15 @@ from eth_credit_hedge.domain.market_data import (
     DEFAULT_TRIGGER_PRICE_SOURCE,
     TriggerPriceSource,
 )
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    PriceStepFractionStopConfig,
+    Rate,
+    StopConfig,
+    StopMode,
+    StrategyMathError,
+    parse_stop_configuration,
+)
 
 
 class RecoveryMode(str, Enum):
@@ -40,7 +49,7 @@ class StrategyConfig:
     """Validated inputs that control deterministic strategy behavior."""
 
     level_count: int
-    stop_rate: Decimal
+    stop: StopConfig
     recovery_mode: RecoveryMode
     lock_policy: LockPolicy
     recovery_tp_count: int = 3
@@ -48,15 +57,25 @@ class StrategyConfig:
     def __post_init__(self) -> None:
         if self.level_count <= 0:
             raise ValueError("level count must be positive")
-        stop_rate = Decimal(str(self.stop_rate))
-        if not stop_rate.is_finite() or stop_rate <= 0:
-            raise ValueError("stop rate must be positive")
+        if not isinstance(
+            self.stop, (EntryPercentStopConfig, PriceStepFractionStopConfig)
+        ):
+            raise ValueError("strategy stop configuration must be explicit")
         if self.recovery_tp_count <= 0:
             raise ValueError("recovery TP count must be positive")
 
-        object.__setattr__(self, "stop_rate", stop_rate)
         object.__setattr__(self, "recovery_mode", RecoveryMode(self.recovery_mode))
         object.__setattr__(self, "lock_policy", LockPolicy(self.lock_policy))
+
+    @property
+    def stop_mode(self) -> StopMode:
+        return self.stop.mode
+
+    @property
+    def stop_parameter(self) -> Decimal:
+        if isinstance(self.stop, EntryPercentStopConfig):
+            return self.stop.rate.value
+        return self.stop.fraction.value
 
     @classmethod
     def baseline(
@@ -67,7 +86,7 @@ class StrategyConfig:
     ) -> StrategyConfig:
         return cls(
             level_count=level_count,
-            stop_rate=Decimal("0.15"),
+            stop=EntryPercentStopConfig(Rate(Decimal("0.0015"))),
             recovery_mode=RecoveryMode.FULL_NEXT_TP,
             lock_policy=LockPolicy.UNHEDGED,
             recovery_tp_count=recovery_tp_count,
@@ -82,7 +101,7 @@ class StrategyConfig:
     ) -> StrategyConfig:
         return cls(
             level_count=level_count,
-            stop_rate=Decimal("0.15"),
+            stop=EntryPercentStopConfig(Rate(Decimal("0.0015"))),
             recovery_mode=RecoveryMode.FULL_NEXT_TP,
             lock_policy=LockPolicy.BREAKEVEN_FLOOR,
             recovery_tp_count=recovery_tp_count,
@@ -125,14 +144,36 @@ class RuntimeConfig:
     def from_env(cls, environ: Mapping[str, str] | None = None) -> RuntimeConfig:
         """Parse strategy environment variables into one immutable object."""
         values = dict(os.environ if environ is None else environ)
+        if "ETH_HEDGE_STOP_RATE" in values:
+            raise ValueError(
+                "ETH_HEDGE_STOP_RATE is ambiguous and no longer supported; "
+                "use ETH_HEDGE_STOP_MODE=ENTRY_PERCENT with "
+                "ETH_HEDGE_ENTRY_STOP_RATE, or "
+                "ETH_HEDGE_STOP_MODE=PRICE_STEP_FRACTION with "
+                "ETH_HEDGE_PRICE_STEP_STOP_FRACTION"
+            )
         baseline = StrategyConfig.baseline()
+        raw_stop_mode = values.get(
+            "ETH_HEDGE_STOP_MODE", baseline.stop_mode.value
+        ).upper()
+        stop_fields: dict[str, object] = {}
+        if "ETH_HEDGE_ENTRY_STOP_RATE" in values:
+            stop_fields["entry_stop_rate"] = values["ETH_HEDGE_ENTRY_STOP_RATE"]
+        if "ETH_HEDGE_PRICE_STEP_STOP_FRACTION" in values:
+            stop_fields["price_step_stop_fraction"] = values[
+                "ETH_HEDGE_PRICE_STEP_STOP_FRACTION"
+            ]
+        if not stop_fields and raw_stop_mode == StopMode.ENTRY_PERCENT.value:
+            stop_fields["entry_stop_rate"] = baseline.stop_parameter
+        try:
+            stop = parse_stop_configuration(raw_stop_mode, stop_fields)
+        except StrategyMathError as exc:
+            raise ValueError(str(exc)) from exc
         strategy = StrategyConfig(
             level_count=int(
                 values.get("ETH_HEDGE_LEVEL_COUNT", str(baseline.level_count))
             ),
-            stop_rate=Decimal(
-                values.get("ETH_HEDGE_STOP_RATE", str(baseline.stop_rate))
-            ),
+            stop=stop,
             recovery_mode=RecoveryMode(
                 values.get(
                     "ETH_HEDGE_RECOVERY_MODE", baseline.recovery_mode.value

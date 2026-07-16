@@ -17,6 +17,7 @@ from eth_credit_hedge.config.schema import (
     RuntimeConfig,
     RuntimeEnvironment,
 )
+from eth_credit_hedge.domain.strategy_math import StopMode
 
 
 MUTATION_GATE_ENV = "RUN_BYBIT_DEMO_MUTATIONS"
@@ -90,8 +91,11 @@ def parse_command(
         raise ValueError("demo strategy requires FULL_NEXT_TP recovery")
     if runtime.strategy.lock_policy is not LockPolicy.UNHEDGED:
         raise ValueError("demo strategy requires UNHEDGED lock policy")
-    if runtime.strategy.stop_rate != Decimal("0.15"):
-        raise ValueError("demo strategy requires stop distance 15% of delta step")
+    if (
+        runtime.strategy.stop_mode is not StopMode.ENTRY_PERCENT
+        or runtime.strategy.stop_parameter != Decimal("0.0015")
+    ):
+        raise ValueError("demo strategy requires stop distance 0.15% of entry")
     if args.action == "run" and values.get(MUTATION_GATE_ENV) != FULL_STRATEGY_DEMO_TOKEN:
         raise ValueError(
             f"run requires {MUTATION_GATE_ENV}={FULL_STRATEGY_DEMO_TOKEN}"

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
 from eth_credit_hedge.core.ledger import LedgerEvent, StrategyResult
 
 
@@ -341,9 +342,12 @@ def run_scenario(scenario: Scenario) -> ScenarioRun:
         option_quantity="1",
         premium_credit=scenario.premium_credit,
     )
-    result = HedgeEngine(spread, level_count=scenario.level_count).run_with_accounting(
-        list(scenario.prices)
-    )
+    # These locked historical ledgers characterize the former approved mode.
+    result = HedgeEngine(
+        spread,
+        level_count=scenario.level_count,
+        stop=PriceStepFractionStopConfig(Rate(Decimal("0.15"))),
+    ).run_with_accounting(list(scenario.prices))
     expected_ledger = tuple(
         event.canonical(sequence)
         for sequence, event in enumerate(scenario.expected_events, start=1)

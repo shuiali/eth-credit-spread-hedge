@@ -7,6 +7,7 @@ from eth_credit_hedge.config.schema import (
     RuntimeEnvironment,
     StrategyConfig,
 )
+from eth_credit_hedge.domain.strategy_math import StopMode
 
 __all__ = [
     "LockPolicy",
@@ -14,4 +15,5 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeEnvironment",
     "StrategyConfig",
+    "StopMode",
 ]

@@ -15,6 +15,7 @@ from eth_credit_hedge.domain.option_position import (
     OptionQuoteValidationPolicy,
     PutCreditSpreadPosition,
 )
+from eth_credit_hedge.domain.strategy_math import LevelSpacingMode, StopMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,9 @@ class DashboardLevel:
     entry_price: Decimal
     tp_price: Decimal
     stop_price: Decimal
+    spacing_mode: LevelSpacingMode
+    stop_mode: StopMode
+    stop_parameter: Decimal
     state: str
     attempts: int
     active_quantity: Decimal
@@ -237,6 +241,9 @@ def build_dashboard_payload(
             entry_price=level.entry_price,
             tp_price=level.tp_price,
             stop_price=level.stop_price,
+            spacing_mode=level.spacing_mode,
+            stop_mode=level.stop_mode,
+            stop_parameter=level.stop_parameter,
             state=level.state.value,
             attempts=level.attempts,
             active_quantity=level.active_quantity,
@@ -253,7 +260,7 @@ def build_dashboard_payload(
     if monte_carlo is None:
         mc_paths: tuple[tuple[Decimal, ...], ...] = ()
         mc_floor_passes: tuple[bool, ...] = ()
-        terminal = (result.metrics.combined_pnl,)
+        terminal: tuple[Decimal, ...] = (result.metrics.combined_pnl,)
         floor_count = int(result.metrics.floor_pass)
         path_count = 1
         floor_rate = Decimal(floor_count)
@@ -279,6 +286,7 @@ def build_dashboard_payload(
     combined_pnl = tuple(item.combined_terminal_value_pnl for item in snapshots)
     final_snapshot = snapshots[-1]
     metrics = result.metrics
+    first_level = result.levels[0]
     state_abbreviations = {"READY": "R", "ACTIVE": "A", "PAID": "P", "LOCKED": "L"}
     level_states = "  ".join(
         f"L{level.level_id}:{state_abbreviations[level.state.value]}"
@@ -286,6 +294,20 @@ def build_dashboard_payload(
         for level in result.levels
     )
     kpi_rows = (
+        ("Stop mode", first_level.stop_mode.value, None),
+        (
+            "Stop parameter",
+            _format_stop_parameter(
+                first_level.stop_mode,
+                first_level.stop_parameter,
+            ),
+            None,
+        ),
+        (
+            "Stop distance",
+            f"${first_level.stop_price - first_level.entry_price:.2f}",
+            None,
+        ),
         ("ETH spot", str(spread.spot), None),
         (
             "Put spread",
@@ -462,6 +484,13 @@ def _format_duration(seconds: Decimal) -> str:
     hours, remainder = divmod(remainder, 3_600)
     minutes, _ = divmod(remainder, 60)
     return f"{days}d {hours}h {minutes}m"
+
+
+def _format_stop_parameter(mode: StopMode, parameter: Decimal) -> str:
+    percentage = parameter * Decimal("100")
+    text = format(percentage, "f").rstrip("0").rstrip(".")
+    reference = "entry" if mode is StopMode.ENTRY_PERCENT else "zone width"
+    return f"{text}% of {reference}"
 
 
 def _format_iv_and_greeks(

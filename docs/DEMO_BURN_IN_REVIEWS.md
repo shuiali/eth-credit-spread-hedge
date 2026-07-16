@@ -319,11 +319,16 @@ Status: SAFE CLOSE; RECOVERY NOT OBSERVED (2026-07-16).
   SHA-256
   `c50d94e1fad118a00ab4dce05b2d82bb3f4650905a096df2c2d97eec33835fa2`.
 
-## Linked-delta TP/SL validation
+## Linked-price-step TP/SL validation
 
 Status: BOUNDED TP/SL PASS; FULL REVALIDATION PENDING (2026-07-16).
 
-- The geometry contract now defines TP distance as one full delta step and SL
+Milestone 1.3 note: this section records the historical
+`PRICE_STEP_FRACTION=0.15` demo strategy. It is not the current default; the
+approved default is now `ENTRY_PERCENT=0.0015`, and the historical evidence is
+retained without reinterpretation.
+
+- The geometry contract now defines TP distance as one full price step and SL
   distance as 15% of that step. A 100-level test over the 100 USDT spread
   therefore used 1 USDT TP distance and 0.15 USDT SL distance.
 - `DEMO-C0021` opened three independent 0.1 ETH baselines. Level 66 filled at
@@ -345,11 +350,11 @@ Status: BOUNDED TP/SL PASS; FULL REVALIDATION PENDING (2026-07-16).
   switch, and exact reconciliation:
   `artifacts/demo-preflight-20260716T112448281735Z.json`, SHA-256
   `a70ba5698bf8242056db6776872ea5124f1f71b1a705a8943c85451d094d0d59`.
-- The linked-delta mainnet shadow capture and replay have passed. The previous
+- The linked-price-step mainnet shadow capture and replay have passed. The previous
   one-hour demo burn-in used the old entry-relative stop rule and still requires
-  a complete linked-delta rerun before pilot approval.
+  a complete linked-price-step rerun before pilot approval.
 
-## Linked-delta burn-in attempt
+## Linked-price-step burn-in attempt
 
 Status: NOT PASSED; VERIFIED SAFE CLOSE (2026-07-16).
 

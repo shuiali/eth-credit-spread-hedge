@@ -13,12 +13,16 @@ from eth_credit_hedge.backtesting.market_path import expand_price_anchors
 from eth_credit_hedge.config import LockPolicy, RecoveryMode
 from eth_credit_hedge.core.credit_spread import (
     CreditSpread,
-    DecimalLike,
     ZERO,
     to_decimal,
 )
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import StrategyMetrics, StrategyResult
+from eth_credit_hedge.domain.strategy_math import (
+    EntryPercentStopConfig,
+    Rate,
+    StopConfig,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,9 +113,10 @@ def run_monte_carlo(
     recovery_mode: RecoveryMode | str = RecoveryMode.FULL_NEXT_TP,
     recovery_tp_count: int = 3,
     lock_policy: LockPolicy | str = LockPolicy.UNHEDGED,
-    stop_rate: DecimalLike = "0.15",
+    stop: StopConfig | None = None,
 ) -> MonteCarloResult:
     """Generate, persist, and replay every seeded Monte Carlo tick path."""
+    selected_stop = stop or EntryPercentStopConfig(Rate(Decimal("0.0015")))
     paths: list[tuple[Decimal, ...]] = []
     results: list[StrategyResult] = []
     for index in range(config.path_count):
@@ -122,7 +127,7 @@ def run_monte_carlo(
             recovery_mode=recovery_mode,
             recovery_tp_count=recovery_tp_count,
             lock_policy=lock_policy,
-            stop_rate=stop_rate,
+            stop=selected_stop,
         )
         paths.append(path)
         results.append(engine.run_with_accounting(list(path)))
@@ -145,7 +150,12 @@ def run_monte_carlo(
                     "recovery_mode": RecoveryMode(recovery_mode).value,
                     "recovery_tp_count": recovery_tp_count,
                     "lock_policy": LockPolicy(lock_policy).value,
-                    "stop_rate": str(to_decimal(stop_rate)),
+                    "stop_mode": selected_stop.mode.value,
+                    "stop_parameter": str(
+                        selected_stop.rate.value
+                        if isinstance(selected_stop, EntryPercentStopConfig)
+                        else selected_stop.fraction.value
+                    ),
                 },
                 "paths": [[str(tick) for tick in path] for path in paths],
             },

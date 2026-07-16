@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from enum import Enum
 from typing import Self, TypeAlias
 
@@ -323,10 +323,15 @@ class LevelMath:
             raise InvalidUnitsError(
                 "price distance must equal entry price minus take-profit price"
             )
-        if self.stop_distance.value != self.stop_price.value - self.entry_price.value:
-            raise InvalidUnitsError(
-                "stop distance must equal stop price minus entry price"
-            )
+        with localcontext() as context:
+            context.prec = 100
+            if (
+                self.stop_distance.value
+                != self.stop_price.value - self.entry_price.value
+            ):
+                raise InvalidUnitsError(
+                    "stop distance must equal stop price minus entry price"
+                )
         if self.zone_option_loss_budget.value < 0:
             raise InvalidConfigurationError(
                 "zone option-loss budget cannot be negative"
@@ -484,6 +489,56 @@ def parse_spacing_configuration(
     )
 
 
+_STOP_FIELDS: dict[StopMode, frozenset[str]] = {
+    StopMode.ENTRY_PERCENT: frozenset({"entry_stop_rate"}),
+    StopMode.PRICE_STEP_FRACTION: frozenset({"price_step_stop_fraction"}),
+}
+
+
+def validate_stop_configuration_fields(
+    mode: StopMode | str,
+    fields: Collection[str],
+) -> None:
+    """Reject ambiguous or mixed stop parameters before geometry is built."""
+    parsed_mode = StopMode.parse(mode)
+    supplied = set(fields)
+    if "stop_rate" in supplied:
+        raise InvalidConfigurationError(
+            "ambiguous stop_rate is not supported; use ENTRY_PERCENT with "
+            "entry_stop_rate or PRICE_STEP_FRACTION with "
+            "price_step_stop_fraction"
+        )
+    expected = _STOP_FIELDS[parsed_mode]
+    missing = expected - supplied
+    extra = supplied - expected
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append("missing " + ", ".join(sorted(missing)))
+        if extra:
+            details.append("unexpected " + ", ".join(sorted(extra)))
+        raise InvalidConfigurationError(
+            f"{parsed_mode.value} stop configuration is invalid: "
+            + "; ".join(details)
+        )
+
+
+def parse_stop_configuration(
+    mode: StopMode | str,
+    fields: Mapping[str, object],
+) -> StopConfig:
+    """Parse one strict user-facing stop section into its runtime contract."""
+    parsed_mode = StopMode.parse(mode)
+    validate_stop_configuration_fields(parsed_mode, fields.keys())
+    if parsed_mode is StopMode.ENTRY_PERCENT:
+        return EntryPercentStopConfig(
+            Rate(_decimal_field(fields, "entry_stop_rate"))
+        )
+    return PriceStepFractionStopConfig(
+        Rate(_decimal_field(fields, "price_step_stop_fraction"))
+    )
+
+
 def _decimal_field(fields: Mapping[str, object], name: str) -> Decimal:
     try:
         value = Decimal(str(fields[name]))
@@ -529,5 +584,7 @@ __all__ = [
     "StopMode",
     "require_valuation_context",
     "parse_spacing_configuration",
+    "parse_stop_configuration",
     "validate_spacing_configuration_fields",
+    "validate_stop_configuration_fields",
 ]

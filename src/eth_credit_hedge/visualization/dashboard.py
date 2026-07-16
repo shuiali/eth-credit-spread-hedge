@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from typing import Any, Iterable
 
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -34,7 +34,7 @@ class Dashboard:
     def __init__(self, payload: DashboardPayload) -> None:
         self.payload = payload
         self.figure: Figure | None = None
-        self._monte_carlo_lines = []
+        self._monte_carlo_lines: list[Any] = []
         self._path_selector: Slider | None = None
 
     def build_figure(self) -> Figure:
@@ -91,7 +91,7 @@ class Dashboard:
         plt.show(block=True)
 
     @staticmethod
-    def _style_axis(axis) -> None:
+    def _style_axis(axis: Any) -> None:
         axis.set_facecolor(C_PANEL)
         axis.tick_params(colors=C_ACCENT, labelsize=7)
         axis.grid(True, color=C_GRID, alpha=0.30, linewidth=0.5)
@@ -99,10 +99,10 @@ class Dashboard:
             spine.set_color(C_GRID)
 
     @staticmethod
-    def _title(axis, text: str) -> None:
+    def _title(axis: Any, text: str) -> None:
         axis.set_title(text, color=C_TEXT, fontsize=10, fontweight="bold", pad=5)
 
-    def _draw_price(self, axis) -> None:
+    def _draw_price(self, axis: Any) -> None:
         self._title(
             axis,
             f"Price Path + Virtual Levels — {self.payload.selected_path_name}",
@@ -158,7 +158,7 @@ class Dashboard:
             ncols=2,
         )
 
-    def _draw_pnl(self, axis) -> None:
+    def _draw_pnl(self, axis: Any) -> None:
         self._title(axis, "Option P&L + Hedge P&L + Combined P&L")
         series = (
             (self.payload.option_pnl, C_OPTION, "--", "Option P&L", 1.1),
@@ -202,7 +202,7 @@ class Dashboard:
             ncols=2,
         )
 
-    def _draw_payoff(self, axis) -> None:
+    def _draw_payoff(self, axis: Any) -> None:
         self._title(axis, "Expiration Payoff")
         prices, pnl = zip(*self.payload.payoff_curve)
         float_prices = self._floats(prices)
@@ -235,7 +235,7 @@ class Dashboard:
         axis.set_xlabel("ETH price", color=C_ACCENT, fontsize=7)
         axis.set_ylabel("Option P&L", color=C_TEXT, fontsize=8)
 
-    def _draw_monte_carlo(self, axis) -> None:
+    def _draw_monte_carlo(self, axis: Any) -> None:
         self._monte_carlo_lines = []
         if not self.payload.monte_carlo_combined_paths:
             self._title(axis, "Monte Carlo Combined Paths")
@@ -289,7 +289,7 @@ class Dashboard:
             labelcolor=C_TEXT,
         )
 
-    def _draw_terminal_distribution(self, axis) -> None:
+    def _draw_terminal_distribution(self, axis: Any) -> None:
         self._title(axis, "Terminal Combined-P&L Distribution")
         values = self._floats(self.payload.terminal_pnl_distribution)
         colors = [C_COMBINED if value >= 0 else C_SL for value in values]
@@ -309,7 +309,7 @@ class Dashboard:
         axis.set_xlabel("Terminal combined P&L", color=C_ACCENT, fontsize=7)
         axis.set_ylabel("Paths", color=C_TEXT, fontsize=8)
 
-    def _draw_risk_controls(self, axis) -> None:
+    def _draw_risk_controls(self, axis: Any) -> None:
         self._title(axis, "Recovery Debt + Remaining Premium Stop Budget")
         for values, color, label in (
             (self.payload.recovery_debt, C_SL, "Recovery debt"),
@@ -338,7 +338,7 @@ class Dashboard:
             labelcolor=C_TEXT,
         )
 
-    def _draw_levels(self, axis) -> None:
+    def _draw_levels(self, axis: Any) -> None:
         self._title(axis, "Per-Level Quantity + State")
         labels = [f"L{level.level_id}" for level in self.payload.levels]
         quantities = [
@@ -400,7 +400,7 @@ class Dashboard:
         if self.figure is not None:
             self.figure.canvas.draw_idle()
 
-    def _draw_ledger(self, axis) -> None:
+    def _draw_ledger(self, axis: Any) -> None:
         visible_events = self.payload.events[-20:]
         self._title(
             axis,
@@ -438,7 +438,7 @@ class Dashboard:
         )
         self._style_table(table, len(rows))
 
-    def _draw_kpis(self, axis) -> None:
+    def _draw_kpis(self, axis: Any) -> None:
         self._title(axis, "KPI Summary")
         axis.axis("off")
         row_height = 1.0 / (len(self.payload.kpi_rows) + 1)
@@ -470,7 +470,7 @@ class Dashboard:
             )
 
     @staticmethod
-    def _style_table(table, row_count: int) -> None:
+    def _style_table(table: Any, row_count: int) -> None:
         table.auto_set_font_size(False)
         table.set_fontsize(max(5.0, min(7.0, 9.5 - row_count * 0.15)))
         table.scale(1.0, max(0.55, min(1.05, 10.0 / max(row_count, 1))))
@@ -483,7 +483,9 @@ class Dashboard:
             cell.get_text().set_zorder(6)
 
     @staticmethod
-    def _sample(values: Iterable, *, max_points: int = 6_000) -> tuple[list[int], list]:
+    def _sample(
+        values: Iterable[Any], *, max_points: int = 6_000
+    ) -> tuple[list[int], list[Any]]:
         values_list = list(values)
         if len(values_list) <= max_points:
             return list(range(len(values_list))), values_list
@@ -494,5 +496,5 @@ class Dashboard:
         return indices, [values_list[index] for index in indices]
 
     @staticmethod
-    def _floats(values: Iterable) -> list[float]:
+    def _floats(values: Iterable[Any]) -> list[float]:
         return [float(value) for value in values]

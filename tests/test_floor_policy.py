@@ -6,6 +6,10 @@ from eth_credit_hedge.config import LockPolicy
 from eth_credit_hedge.core.credit_spread import CreditSpread
 from eth_credit_hedge.core.hedge_engine import HedgeEngine
 from eth_credit_hedge.core.ledger import LedgerEventType
+from eth_credit_hedge.domain.strategy_math import PriceStepFractionStopConfig, Rate
+
+
+PRICE_STEP_STOP = PriceStepFractionStopConfig(Rate(Decimal("0.15")))
 
 
 def make_engine() -> HedgeEngine:
@@ -13,6 +17,7 @@ def make_engine() -> HedgeEngine:
         CreditSpread("3010", "3000", "2980", "1", "10"),
         level_count=1,
         lock_policy=LockPolicy.BREAKEVEN_FLOOR,
+        stop=PRICE_STEP_STOP,
     )
 
 
@@ -20,6 +25,7 @@ def test_start_exactly_at_entry_then_fall_opens_the_hedge() -> None:
     result = HedgeEngine(
         CreditSpread("3010", "3000", "2980", "1", "15"),
         level_count=1,
+        stop=PRICE_STEP_STOP,
     ).run_with_accounting(["3000", "2990"])
 
     assert [event.event_type for event in result.events] == [LedgerEventType.ENTRY]

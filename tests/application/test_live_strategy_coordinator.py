@@ -40,6 +40,7 @@ from eth_credit_hedge.domain.journal import JournalEventType
 from eth_credit_hedge.domain.live_recovery import SameLevelRecoveryPlanner
 from eth_credit_hedge.domain.market_data import TriggerPriceEvent, TriggerPriceSource
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits
+from eth_credit_hedge.domain.strategy_math import StopMode
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     SqliteExecutionStore,
 )
@@ -152,6 +153,8 @@ async def run_stop_recovery(path: Path) -> tuple[str, str]:
                     take_profit_price=Decimal("2990"),
                     stop_price=Decimal("3001.5"),
                     option_budget=Decimal("0.1"),
+                    stop_mode=StopMode.PRICE_STEP_FRACTION,
+                    stop_parameter=Decimal("0.15"),
                 ),
             ),
         ),

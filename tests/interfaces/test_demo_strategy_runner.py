@@ -14,7 +14,8 @@ from eth_credit_hedge.interfaces.demo_strategy_runner import (
 BASE_ENV = {
     "ETH_HEDGE_ENVIRONMENT": "DEMO",
     "ETH_HEDGE_LEVEL_COUNT": "10",
-    "ETH_HEDGE_STOP_RATE": "0.15",
+    "ETH_HEDGE_STOP_MODE": "ENTRY_PERCENT",
+    "ETH_HEDGE_ENTRY_STOP_RATE": "0.0015",
     "ETH_HEDGE_RECOVERY_MODE": "FULL_NEXT_TP",
     "ETH_HEDGE_LOCK_POLICY": "UNHEDGED",
 }

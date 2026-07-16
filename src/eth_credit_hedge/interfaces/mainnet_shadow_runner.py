@@ -38,6 +38,7 @@ from eth_credit_hedge.domain.market_data import (
     evaluate_market_data_health,
 )
 from eth_credit_hedge.domain.risk import RiskEngine, RiskState
+from eth_credit_hedge.domain.strategy_math import EntryPercentStopConfig, Rate
 from eth_credit_hedge.infrastructure.bybit.public_market_data import (
     BybitPublicMarketData,
 )
@@ -200,7 +201,7 @@ def _shadow_levels(
             long_put_strike=reference_price - price_step_usd * Decimal("21"),
             option_quantity=quantity,
             price_step_usd=price_step_usd,
-            stop_rate=Decimal("0.15"),
+            stop=EntryPercentStopConfig(Rate(Decimal("0.0015"))),
         )
     )
     if any(level.tp_price <= ZERO for level in levels):

@@ -19,8 +19,10 @@ from eth_credit_hedge.domain.strategy_math.contracts import (
     StopConfig,
     StopMode,
     parse_spacing_configuration,
+    parse_stop_configuration,
     require_valuation_context,
     validate_spacing_configuration_fields,
+    validate_stop_configuration_fields,
 )
 from eth_credit_hedge.domain.strategy_math.errors import (
     DeltaSpacingUnavailableError,
@@ -46,6 +48,10 @@ from eth_credit_hedge.domain.strategy_math.spacing import (
     LevelSpacingEngine,
     SpacingLevel,
     solve_monotonic_price,
+)
+from eth_credit_hedge.domain.strategy_math.stops import (
+    StopGeometryEngine,
+    StrategyMathEngine,
 )
 from eth_credit_hedge.domain.strategy_math.valuation import (
     ExpirationOptionValuation,
@@ -84,14 +90,18 @@ __all__ = [
     "SpacingConfig",
     "SpacingLevel",
     "StopConfig",
+    "StopGeometryEngine",
     "StopMode",
+    "StrategyMathEngine",
     "StrategyMathError",
     "UnsupportedValuationError",
     "Volatility",
     "ExpirationOptionValuation",
     "OptionValuationPort",
     "parse_spacing_configuration",
+    "parse_stop_configuration",
     "require_valuation_context",
     "solve_monotonic_price",
     "validate_spacing_configuration_fields",
+    "validate_stop_configuration_fields",
 ]

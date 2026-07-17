@@ -60,6 +60,10 @@ class ReferenceType(str, Enum):
     EXPECTED_FILL = "EXPECTED_FILL"
 
 
+class MigrationKind(str, Enum):
+    MIGRATED_FROM_LEGACY_SNAPSHOT = "MIGRATED_FROM_LEGACY_SNAPSHOT"
+
+
 @dataclass(frozen=True, slots=True)
 class FundingAllocation:
     lot_id: str
@@ -282,10 +286,28 @@ class RecoveryDebtChanged(EventMetadata):
         required_text(self.reason, "debt reason")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MigratedFromLegacySnapshot(EventMetadata):
+    """An explicit migration marker; it is never a synthetic raw execution."""
+
+    legacy_snapshot_type: str
+    legacy_snapshot_key: str
+    legacy_payload_digest: str
+    migration_kind: MigrationKind = MigrationKind.MIGRATED_FROM_LEGACY_SNAPSHOT
+
+    def __post_init__(self) -> None:
+        EventMetadata.__post_init__(self)
+        required_text(self.legacy_snapshot_type, "legacy snapshot type")
+        required_text(self.legacy_snapshot_key, "legacy snapshot key")
+        required_text(self.legacy_payload_digest, "legacy payload digest")
+        if self.migration_kind is not MigrationKind.MIGRATED_FROM_LEGACY_SNAPSHOT:
+            raise AccountingContractError("legacy migration kind is invalid")
+
+
 AccountingEvent: TypeAlias = (
     OptionExecutionRecorded | HedgeExecutionRecorded | FeeRecorded | FundingRecorded
     | ReferencePriceRecorded | OptionQuoteRecorded | PositionReconciled
-    | AccountingSnapshotCreated | RecoveryDebtChanged
+    | AccountingSnapshotCreated | RecoveryDebtChanged | MigratedFromLegacySnapshot
 )
 
 
@@ -409,6 +431,20 @@ def event_from_dict(payload: dict[str, object]) -> AccountingEvent:
             ),
             reason=_text(payload, "reason"),
         )
+    if event_type == "MigratedFromLegacySnapshot":
+        return MigratedFromLegacySnapshot(
+            **metadata,
+            legacy_snapshot_type=_text(payload, "legacy_snapshot_type"),
+            legacy_snapshot_key=_text(payload, "legacy_snapshot_key"),
+            legacy_payload_digest=_text(payload, "legacy_payload_digest"),
+            migration_kind=MigrationKind(
+                _text_or_default(
+                    payload,
+                    "migration_kind",
+                    MigrationKind.MIGRATED_FROM_LEGACY_SNAPSHOT.value,
+                )
+            ),
+        )
     raise AccountingContractError(f"unsupported accounting event type: {event_type}")
 
 
@@ -463,6 +499,12 @@ def _text(payload: dict[str, object], field_name: str) -> str:
     if not isinstance(value, str):
         raise AccountingContractError(f"{field_name} must be text")
     return value
+
+
+def _text_or_default(
+    payload: dict[str, object], field_name: str, default: str
+) -> str:
+    return default if field_name not in payload else _text(payload, field_name)
 
 
 def _optional_text(payload: dict[str, object], field_name: str) -> str | None:

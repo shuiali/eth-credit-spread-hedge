@@ -9,6 +9,10 @@ from eth_credit_hedge.domain.accounting.reconstruction import (
     CombinedLedgerReconstructor,
     CombinedLedgerState,
 )
+from eth_credit_hedge.domain.accounting.reconciliation import (
+    AccountingExchangeState,
+    AccountingReconciliationReport,
+)
 
 __all__ = [
     "AccountingEvent",
@@ -20,4 +24,6 @@ __all__ = [
     "HedgeLedgerSnapshot",
     "CombinedLedgerReconstructor",
     "CombinedLedgerState",
+    "AccountingExchangeState",
+    "AccountingReconciliationReport",
 ]

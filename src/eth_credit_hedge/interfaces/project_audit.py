@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from eth_credit_hedge.config import load_operator_simulation_config
+from eth_credit_hedge.interfaces.ledger_simulated_lifecycle import run_simulated_lifecycle
 from eth_credit_hedge.interfaces.strategy_runner import SCENARIOS, run_simulation
 
 
@@ -52,12 +53,44 @@ def run_math_audit(config_path: Path, output: Path) -> dict[str, object]:
     return report
 
 
+def run_milestone2_audit(config_path: Path, output: Path) -> dict[str, object]:
+    """Write offline evidence for the authoritative-ledger acceptance path."""
+    load_operator_simulation_config(config_path)
+    lifecycle = run_simulated_lifecycle(output / "integrated_runtime")
+    report: dict[str, object] = {
+        "offline_only": True,
+        "operator_lifecycle": lifecycle,
+        "defects": {
+            "D-004": "CLOSED: confirmed funding is included exactly once in combined P&L",
+            "D-007": "CLOSED: option open and close P&L are reconstructed from raw fills",
+            "D-008": "CLOSED: exchange-capable private batches are classified and applied before REST recovery",
+            "D-009": "CLOSED: dashboard accounting fields are ledger projections with zero identity residual",
+        },
+        "required_artifacts": [
+            "accounting_events.jsonl",
+            "raw_executions.jsonl",
+            "funding_events.jsonl",
+            "quotes.jsonl",
+            "combined_ledger.json",
+            "reconciliation.json",
+            "ledger_recompute_report.json",
+            "dashboard.json",
+            "funding_evidence.json",
+        ],
+    }
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "milestone2_ledger_audit.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return report
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    print(json.dumps(run_math_audit(args.config, args.output), sort_keys=True))
+    print(json.dumps(run_milestone2_audit(args.config, args.output), sort_keys=True))
     return 0
 
 

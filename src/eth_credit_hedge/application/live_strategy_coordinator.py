@@ -23,6 +23,7 @@ from eth_credit_hedge.application.same_level_recovery import (
 from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 from eth_credit_hedge.domain.client_order_ids import ClientOrderRole
+from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerState
 from eth_credit_hedge.domain.execution import LiveExecutionState, PlaceOrderRequest
 from eth_credit_hedge.domain.instrument_rules import (
     PriceQuantizationPolicy,
@@ -100,6 +101,7 @@ class LiveStrategyCoordinator:
         exit_poll_interval_seconds: float = 0.25,
         costs: StrategyCostConfig | None = None,
         math_engine: StrategyMathEngine | None = None,
+        accounting_refresh: Callable[[], Awaitable[CombinedLedgerState]] | None = None,
     ) -> None:
         if instrument.category != "linear" or instrument.symbol != "ETHUSDT":
             raise ValueError("live coordinator requires ETHUSDT linear")
@@ -140,6 +142,7 @@ class LiveStrategyCoordinator:
         self._math_engine = math_engine or StrategyMathEngine(
             ExpirationOptionValuation()
         )
+        self._accounting_refresh = accounting_refresh
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._pending_levels: set[int] = set()
@@ -606,6 +609,11 @@ class LiveStrategyCoordinator:
             await self._sleeper(self._exit_poll_interval_seconds)
         state_before = self._journal.state.level(level_id)
         realized = snapshot.realized_pnl
+        ledger_state = (
+            None
+            if self._accounting_refresh is None
+            else await self._accounting_refresh()
+        )
         if snapshot.state is LiveExecutionState.CLOSED_STOP:
             actual_debt = max(-realized, ZERO)
             if state_before.active_role is LiveHedgeRole.RECOVERY:
@@ -640,6 +648,7 @@ class LiveStrategyCoordinator:
                 },
                 event_id=f"exit:{snapshot.stop_order_link_id}:{snapshot.version}",
             )
+            self._assert_recovery_debt_projection(ledger_state)
             return
         if snapshot.state is not LiveExecutionState.CLOSED_TP:
             raise RuntimeError("lifecycle returned a non-terminal exit")
@@ -661,6 +670,22 @@ class LiveStrategyCoordinator:
             },
             event_id=f"exit:{snapshot.tp_order_link_id}:{snapshot.version}",
         )
+        self._assert_recovery_debt_projection(ledger_state)
+
+    def _assert_recovery_debt_projection(
+        self,
+        ledger_state: CombinedLedgerState | None,
+    ) -> None:
+        if ledger_state is None:
+            return
+        projected = sum(
+            (level.confirmed_debt for level in self._journal.state.levels),
+            ZERO,
+        )
+        if projected != ledger_state.confirmed_recovery_debt.value:
+            raise RuntimeError(
+                "legacy recovery-debt projection differs from accounting ledger"
+            )
 
 
 def _hedge_level(level: Any) -> HedgeLevel:

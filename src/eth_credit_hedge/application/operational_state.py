@@ -8,6 +8,7 @@ from decimal import Decimal
 from threading import Lock
 
 from eth_credit_hedge.application.demo_runtime_state import DemoRuntimeState
+from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerState
 from eth_credit_hedge.domain.operations import OperationalSnapshot
 
 
@@ -27,6 +28,7 @@ class MutableOperationalState:
         self._clock = clock
         self._lock = Lock()
         self._runtime: DemoRuntimeState | None = None
+        self._accounting: CombinedLedgerState | None = None
         self._last_market_at: datetime | None = None
         self._service_running = False
         self._public_connected = False
@@ -39,6 +41,10 @@ class MutableOperationalState:
     def update_runtime(self, runtime: DemoRuntimeState) -> None:
         with self._lock:
             self._runtime = runtime
+
+    def update_accounting(self, accounting: CombinedLedgerState) -> None:
+        with self._lock:
+            self._accounting = accounting
 
     def mark_running(self, running: bool) -> None:
         with self._lock:
@@ -71,6 +77,7 @@ class MutableOperationalState:
     def snapshot(self) -> OperationalSnapshot:
         with self._lock:
             runtime = self._runtime
+            accounting = self._accounting
             now = _utc(self._clock())
             age_ms = (
                 self._maximum_market_data_age_ms + 1
@@ -81,9 +88,10 @@ class MutableOperationalState:
             active = tuple(
                 level for level in levels if level.active_entry_order_link_id is not None
             )
-            open_quantity = sum(
-                (level.active_quantity for level in active),
-                ZERO,
+            open_quantity = (
+                sum((level.active_quantity for level in active), ZERO)
+                if accounting is None
+                else accounting.hedge.open_quantity
             )
             unprotected = sum(
                 (
@@ -93,7 +101,11 @@ class MutableOperationalState:
                 ),
                 ZERO,
             )
-            debt = sum((level.confirmed_debt for level in levels), ZERO)
+            debt = (
+                sum((level.confirmed_debt for level in levels), ZERO)
+                if accounting is None
+                else accounting.confirmed_recovery_debt.value
+            )
             return OperationalSnapshot(
                 service_running=self._service_running,
                 cycle_id=None if runtime is None else runtime.cycle_id,
@@ -116,7 +128,13 @@ class MutableOperationalState:
                     (level.option_budget for level in levels),
                     ZERO,
                 ),
-                daily_pnl=ZERO if runtime is None else runtime.daily_realized_pnl,
+                daily_pnl=(
+                    accounting.net_combined_mark_pnl.value
+                    if accounting is not None
+                    else ZERO
+                    if runtime is None
+                    else runtime.daily_realized_pnl
+                ),
                 order_rejections=0,
                 duplicate_executions=0,
                 restart_reconciliations=self._restart_reconciliations,

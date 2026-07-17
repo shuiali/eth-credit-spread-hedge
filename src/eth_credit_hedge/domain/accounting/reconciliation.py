@@ -11,6 +11,7 @@ from eth_credit_hedge.domain.accounting.events import (
     AccountingEvent,
     HedgeExecutionRecorded,
     OptionExecutionRecorded,
+    PositionReconciled,
 )
 from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerState
 from eth_credit_hedge.domain.strategy_math.units import Money, Quantity
@@ -30,6 +31,9 @@ class AccountingDifferenceKind(str, Enum):
     REPLAY_DIGEST_MISMATCH = "REPLAY_DIGEST_MISMATCH"
     LEGACY_MIGRATION_REQUIRES_RECONCILIATION = (
         "LEGACY_MIGRATION_REQUIRES_RECONCILIATION"
+    )
+    PRIVATE_EXECUTION_CLASSIFICATION_FAILURE = (
+        "PRIVATE_EXECUTION_CLASSIFICATION_FAILURE"
     )
 
 
@@ -140,6 +144,16 @@ def evaluate_accounting_reconciliation(
         for event in events
         if isinstance(event, (OptionExecutionRecorded, HedgeExecutionRecorded))
     )
+    if any(
+        isinstance(event, PositionReconciled) and not event.matched
+        for event in events
+    ):
+        differences.append(
+            AccountingDifference(
+                AccountingDifferenceKind.PRIVATE_EXECUTION_CLASSIFICATION_FAILURE,
+                "an unclassified private execution requires explicit reconciliation",
+            )
+        )
     expected_execution_ids = frozenset(event.execution.execution_id for event in executions)
     expected_order_ids = frozenset(event.execution.order_id for event in executions)
     if external.execution_ids is None:

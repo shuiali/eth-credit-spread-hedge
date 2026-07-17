@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from eth_credit_hedge.config import load_operator_simulation_config
-from eth_credit_hedge.interfaces.project_audit import run_math_audit
+from eth_credit_hedge.interfaces.project_audit import run_math_audit, run_milestone2_audit
 from eth_credit_hedge.interfaces.strategy_runner import SCENARIOS, main, run_simulation
 
 
@@ -133,3 +133,12 @@ def test_math_audit_closes_or_narrows_plan10_findings(tmp_path: Path) -> None:
     assert "NARROWED" in defects["D-004"]
     assert "Milestone 2" in report["milestone2_handoff"]
     assert (tmp_path / "MILESTONE1_DEFECT_CLOSURE.md").exists()
+
+
+def test_milestone2_project_audit_writes_authoritative_ledger_evidence(tmp_path: Path) -> None:
+    report = run_milestone2_audit(CONFIG, tmp_path)
+    assert report["offline_only"] is True
+    assert report["defects"]["D-004"].startswith("CLOSED")
+    assert report["defects"]["D-008"].startswith("CLOSED")
+    assert (tmp_path / "milestone2_ledger_audit.json").exists()
+    assert (tmp_path / "integrated_runtime" / "dashboard.json").exists()

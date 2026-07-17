@@ -176,7 +176,6 @@ class Dashboard:
                 "Open hedge P&L",
                 0.9,
             ),
-            (self.payload.hedge_pnl, C_HEDGE, "--", "Hedge P&L", 1.1),
             (self.payload.combined_pnl, C_COMBINED, "-", "Combined P&L", 1.8),
         )
         for values, color, line_style, label, line_width in series:

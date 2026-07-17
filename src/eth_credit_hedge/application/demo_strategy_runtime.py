@@ -15,6 +15,10 @@ from threading import Thread
 from typing import Any, Protocol, TYPE_CHECKING
 
 from eth_credit_hedge.application.demo_runtime_journal import DemoRuntimeJournal
+from eth_credit_hedge.application.accounting_runtime import AccountingRuntime
+from eth_credit_hedge.application.private_execution_accounting import (
+    PrivateExecutionClassifier,
+)
 from eth_credit_hedge.application.demo_runtime_state import (
     DemoLevelRuntimeState,
     DemoRuntimeState,
@@ -38,6 +42,7 @@ from eth_credit_hedge.application.option_spread_entry import (
 from eth_credit_hedge.application.protective_exits import ProtectiveExitService
 from eth_credit_hedge.application.read_only_reconciliation import (
     BybitPrivateStateReader,
+    PrivateAccountSnapshot,
     evaluate_private_snapshot,
 )
 from eth_credit_hedge.application.runtime_risk_state import RuntimeRiskStateBuilder
@@ -49,15 +54,23 @@ from eth_credit_hedge.core.virtual_levels import build_virtual_levels
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
 from eth_credit_hedge.domain.control import KillSwitchMode
 from eth_credit_hedge.domain.execution import (
+    ExecutionUpdate,
     ExecutionUpdateBatch,
     PrivateConnectionEvent,
     PrivateConnectionState,
 )
+from eth_credit_hedge.domain.accounting.events import EventSource, OptionQuoteRecorded
+from eth_credit_hedge.domain.accounting.reconstruction import (
+    CombinedLedgerReconstructor,
+    CombinedLedgerState,
+)
+from eth_credit_hedge.domain.accounting.reconciliation import AccountingExchangeState
+from eth_credit_hedge.domain.strategy_math.units import Money, Price, Quantity
 from eth_credit_hedge.domain.instrument_rules import (
     PriceQuantizationPolicy,
     quantize_limit_price,
 )
-from eth_credit_hedge.domain.instruments import InstrumentSpec
+from eth_credit_hedge.domain.instruments import InstrumentSpec, OptionMarketQuote
 from eth_credit_hedge.domain.journal import JournalEventType
 from eth_credit_hedge.domain.live_recovery import SameLevelRecoveryPlanner
 from eth_credit_hedge.domain.market_data import (
@@ -104,6 +117,9 @@ from eth_credit_hedge.infrastructure.persistence.file_kill_switch_store import (
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     SqliteExecutionStore,
 )
+from eth_credit_hedge.infrastructure.persistence.sqlite_accounting_store import (
+    SqliteAccountingStore,
+)
 from eth_credit_hedge.infrastructure.persistence.sqlite_journal_store import (
     SqliteJournalStore,
 )
@@ -133,6 +149,51 @@ class _ProtectionSnapshotReader(Protocol):
     async def load_all_protection_snapshots(
         self,
     ) -> tuple[ProtectionSnapshot, ...]: ...
+
+
+class _CapturedAccountingReader:
+    def __init__(
+        self,
+        snapshot: PrivateAccountSnapshot,
+        *,
+        cycle_number: int,
+        strategy_instance: str,
+        funding_pnl: Money,
+    ) -> None:
+        owned = tuple(
+            execution
+            for execution in snapshot.executions
+            if _belongs_to_cycle(
+                execution.order_link_id,
+                cycle_number=cycle_number,
+                strategy_instance=strategy_instance,
+            )
+        )
+        option_totals: dict[str, Decimal] = {}
+        hedge_short = ZERO
+        for position in snapshot.positions:
+            if position.quantity <= ZERO:
+                continue
+            if position.category == "option":
+                option_totals[position.symbol] = (
+                    option_totals.get(position.symbol, ZERO) + position.quantity
+                )
+            elif position.side == "Sell":
+                hedge_short += position.quantity
+        self._state = AccountingExchangeState(
+            option_quantities={
+                symbol: Quantity(quantity)
+                for symbol, quantity in option_totals.items()
+            },
+            hedge_short_quantity=hedge_short,
+            total_fees=Money(sum((execution.fee for execution in owned), ZERO)),
+            funding_pnl=funding_pnl,
+            order_ids=frozenset(execution.order_id for execution in owned),
+            execution_ids=frozenset(execution.execution_id for execution in owned),
+        )
+
+    async def capture_accounting_state(self) -> AccountingExchangeState:
+        return self._state
 
 
 STRATEGY_INSTANCE = "DEMO"
@@ -276,6 +337,24 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
     if not matched:
         raise RuntimeError("post-option startup reconciliation did not match")
 
+    accounting = await _initialize_accounting_runtime(
+        execution_store=execution_store,
+        accounting_path=_accounting_path(deployment.database_path),
+        option=option,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+        option_quotes=await market_data.get_option_chain("ETH"),
+        clock=now,
+    )
+    if not await _reconcile_accounting_runtime(
+        accounting=accounting,
+        private=private,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+        clock=now,
+    ):
+        raise RuntimeError("startup accounting reconciliation did not match")
+
     secrets = (
         profile.credentials.api_key.get_secret_value(),
         profile.credentials.api_secret.get_secret_value(),
@@ -318,6 +397,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
         clock=now,
     )
     operations.update_runtime(journal.state)
+    operations.update_accounting(accounting.state)
     operations.mark_running(True)
     operations.mark_reconciliation(True, "MATCHED")
     try:
@@ -359,6 +439,8 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             clock_refresh=private.synchronize_clock,
             costs=runtime_config.strategy.costs,
             math_engine=math_engine,
+            accounting=accounting,
+            accounting_strategy_instance=STRATEGY_INSTANCE,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -407,12 +489,38 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
     if not close_verified:
         raise RuntimeError("bounded demo shutdown could not be proven safe") from runtime_error
 
+    await _recover_confirmed_executions(
+        accounting=accounting,
+        execution_store=execution_store,
+        cycle_id=option.cycle_id,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+        clock=now,
+    )
+    if not await _reconcile_accounting_runtime(
+        accounting=accounting,
+        private=private,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+        clock=now,
+    ):
+        raise RuntimeError("shutdown accounting reconciliation did not match")
+
     final_reader = BybitPrivateStateReader(
         trading=private,
         account=private,
         clock=now,
     )
     final_exchange = await final_reader.capture()
+    _assert_shutdown_accounting(
+        accounting.state,
+        options_must_be_flat=command.shutdown_policy.value == "CLOSE_ALL",
+    )
+    await accounting.record_shutdown_snapshot(
+        cycle_id=option.cycle_id,
+        timestamp=now(),
+    )
+    operations.update_accounting(accounting.state)
     payload: dict[str, object] = {
         "accepted": runtime_error is None,
         "action": "run",
@@ -428,6 +536,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             for position in final_exchange.positions
         ),
         "preflight_evidence_sha256": preflight.get("evidence_sha256"),
+        "accounting": accounting.state.to_dict(),
     }
     evidence = _write_runtime_evidence(payload)
     payload["evidence_path"] = str(evidence)
@@ -515,11 +624,21 @@ async def run_simulated_strategy_command(
         payload={"status": "MATCHED"},
         event_id="sim-reconciled",
     )
+    accounting = await _initialize_accounting_runtime(
+        execution_store=execution_store,
+        accounting_path=state_directory / "accounting.sqlite3",
+        option=option,
+        cycle_number=1,
+        strategy_instance="SIM",
+        option_quotes=await exchange.get_option_chain("ETH"),
+        clock=lambda: exchange.current_time_utc,
+    )
     operations = MutableOperationalState(
         maximum_market_data_age_ms=deployment.maximum_market_data_age_ms,
         clock=lambda: exchange.current_time_utc,
     )
     operations.update_runtime(journal.state)
+    operations.update_accounting(accounting.state)
     operations.mark_running(True)
     operations.mark_reconciliation(True, "MATCHED")
     health_server = create_health_server(
@@ -588,6 +707,9 @@ async def run_simulated_strategy_command(
                 journal,
             ),
             order_link_id_factory=deterministic_order_id,
+            accounting=accounting,
+            accounting_strategy_instance="SIM",
+            accounting_reconciliation_enabled=False,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -660,6 +782,21 @@ async def run_simulated_strategy_command(
     )
     if not preserve_state_on_timeout and (positions or orders):
         raise RuntimeError("simulated composition did not finish flat")
+    await _recover_confirmed_executions(
+        accounting=accounting,
+        execution_store=execution_store,
+        cycle_id=option.cycle_id,
+        cycle_number=1,
+        strategy_instance="SIM",
+        clock=lambda: exchange.current_time_utc,
+    )
+    if not preserve_state_on_timeout:
+        _assert_shutdown_accounting(accounting.state, options_must_be_flat=True)
+    await accounting.record_shutdown_snapshot(
+        cycle_id=option.cycle_id,
+        timestamp=exchange.current_time_utc,
+    )
+    operations.update_accounting(accounting.state)
     result = {
         "accepted": True,
         "cycle_id": option.cycle_id,
@@ -681,6 +818,7 @@ async def run_simulated_strategy_command(
         "final_linear_position_count": len(positions),
         "final_linear_order_count": len(orders),
         "close_verified": close_verified,
+        "accounting": accounting.state.to_dict(),
     }
     if runtime_error is not None:
         raise RuntimeError("simulated runtime failed and was closed") from runtime_error
@@ -925,6 +1063,9 @@ async def _run_supervised_session(
     ) = None,
     costs: StrategyCostConfig | None = None,
     math_engine: StrategyMathEngine | None = None,
+    accounting: AccountingRuntime,
+    accounting_strategy_instance: str,
+    accounting_reconciliation_enabled: bool = True,
 ) -> None:
     tasks: list[asyncio.Task[None]] = []
 
@@ -983,6 +1124,18 @@ async def _run_supervised_session(
             fill_interval_seconds=0.25,
         )
 
+    async def refresh_accounting() -> CombinedLedgerState:
+        await _recover_confirmed_executions(
+            accounting=accounting,
+            execution_store=store,
+            cycle_id=option.cycle_id,
+            cycle_number=cycle_number,
+            strategy_instance=accounting_strategy_instance,
+            clock=clock,
+        )
+        operations.update_accounting(accounting.state)
+        return accounting.state
+
     async with asyncio.TaskGroup() as group:
         coordinator = LiveStrategyCoordinator(
             journal=journal,
@@ -1015,6 +1168,7 @@ async def _run_supervised_session(
             entry_gate=entry_gate,
             sleeper=sleeper,
             exit_poll_interval_seconds=exit_poll_interval_seconds,
+            accounting_refresh=refresh_accounting,
         )
         await coordinator.restore_active_levels()
         spawn(
@@ -1025,6 +1179,9 @@ async def _run_supervised_session(
                 private_stream,
                 operations,
                 clock,
+                accounting,
+                cycle_number,
+                accounting_strategy_instance,
             )
         )
         await _wait_for_private_reconciliation(private_stream)
@@ -1045,6 +1202,13 @@ async def _run_supervised_session(
                 operations,
                 clock,
                 deployment.risk_limits.maximum_reconciliation_failures,
+                accounting=accounting,
+                cycle_id=option.cycle_id,
+                cycle_number=cycle_number,
+                strategy_instance=accounting_strategy_instance,
+                accounting_reconciliation_enabled=(
+                    accounting_reconciliation_enabled
+                ),
             )
         )
         spawn(
@@ -1055,6 +1219,7 @@ async def _run_supervised_session(
                 operations,
                 clock,
                 deployment.maximum_market_data_age_ms,
+                accounting,
             )
         )
         spawn(
@@ -1145,6 +1310,9 @@ async def _private_loop(
     stream: PrivateEventPort,
     operations: MutableOperationalState,
     clock: Callable[[], datetime],
+    accounting: AccountingRuntime,
+    cycle_number: int,
+    strategy_instance: str,
 ) -> None:
     async for event in stream.stream_events():
         if isinstance(event, PrivateConnectionEvent):
@@ -1164,6 +1332,14 @@ async def _private_loop(
                 )
                 operations.update_runtime(journal.state)
         elif isinstance(event, ExecutionUpdateBatch):
+            classifier = await _execution_classifier(
+                store=store,
+                cycle_id=journal.state.cycle_id,
+                cycle_number=cycle_number,
+                strategy_instance=strategy_instance,
+            )
+            state = await accounting.apply_private_update_batch(event, classifier)
+            operations.update_accounting(state)
             operations.update_runtime(journal.state)
 
 
@@ -1175,12 +1351,44 @@ async def _reconciliation_loop(
     clock: Callable[[], datetime],
     maximum_failures: int,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    *,
+    accounting: AccountingRuntime | None = None,
+    cycle_id: str | None = None,
+    cycle_number: int | None = None,
+    strategy_instance: str | None = None,
+    accounting_reconciliation_enabled: bool = False,
 ) -> None:
     if maximum_failures <= 0:
         raise ValueError("maximum reconciliation failures must be positive")
     while True:
         await sleeper(5)
-        matched = await _reconcile_runtime(journal, store, private, clock)
+        if accounting is not None:
+            if cycle_id is None or cycle_number is None or strategy_instance is None:
+                raise ValueError("accounting reconciliation identifiers are required")
+            await _recover_confirmed_executions(
+                accounting=accounting,
+                execution_store=store,
+                cycle_id=cycle_id,
+                cycle_number=cycle_number,
+                strategy_instance=strategy_instance,
+                clock=clock,
+            )
+            operations.update_accounting(accounting.state)
+        accounting_matched = True
+        if accounting is not None and accounting_reconciliation_enabled:
+            if cycle_number is None or strategy_instance is None:
+                raise ValueError("accounting reconciliation identifiers are required")
+            accounting_matched = await _reconcile_accounting_runtime(
+                accounting=accounting,
+                private=private,
+                cycle_number=cycle_number,
+                strategy_instance=strategy_instance,
+                clock=clock,
+            )
+        matched = (
+            await _reconcile_runtime(journal, store, private, clock)
+            and accounting_matched
+        )
         operations.update_runtime(journal.state)
         operations.mark_reconciliation(matched, "MATCHED" if matched else "MISMATCH")
         if (
@@ -1198,6 +1406,7 @@ async def _option_health_loop(
     operations: MutableOperationalState,
     clock: Callable[[], datetime],
     maximum_age_ms: int,
+    accounting: AccountingRuntime,
 ) -> None:
     while True:
         quotes = await market_data.get_option_chain("ETH")
@@ -1212,6 +1421,14 @@ async def _option_health_loop(
             for quote in selected.values()
         )
         expiry_safe = now < option.expiry_time_utc - OPTION_HEDGE_CUTOFF
+        if fresh:
+            await _record_option_quotes(
+                accounting,
+                tuple(selected.values()),
+                option.cycle_id,
+                maximum_age_ms,
+            )
+            operations.update_accounting(accounting.state)
         if not fresh or not expiry_safe:
             await journal.append(
                 JournalEventType.TRADING_SUSPENDED,
@@ -1273,6 +1490,179 @@ async def _alert_loop(
         await asyncio.sleep(1)
 
 
+def _accounting_path(execution_path: Path) -> Path:
+    return execution_path.with_name(f"{execution_path.stem}-accounting.sqlite3")
+
+
+def _assert_shutdown_accounting(
+    state: CombinedLedgerState,
+    *,
+    options_must_be_flat: bool,
+) -> None:
+    if state.hedge.open_quantity != ZERO:
+        raise RuntimeError("shutdown ledger still contains an open hedge lot")
+    if options_must_be_flat and (
+        state.option.long.open_quantity != ZERO
+        or state.option.short.open_quantity != ZERO
+    ):
+        raise RuntimeError("shutdown ledger still contains open option fills")
+    residuals = (
+        state.mark_identity_residual.value,
+        state.liquidation_identity_residual.value,
+        state.cash_equity_mark_residual.value,
+        state.cash_equity_liquidation_residual.value,
+        state.debt_identity_residual.value,
+    )
+    if any(residual != ZERO for residual in residuals):
+        raise RuntimeError("shutdown ledger identity residual is nonzero")
+
+
+async def _initialize_accounting_runtime(
+    *,
+    execution_store: SqliteExecutionStore,
+    accounting_path: Path,
+    option: OptionSpreadExecutionSnapshot,
+    cycle_number: int,
+    strategy_instance: str,
+    option_quotes: tuple[OptionMarketQuote, ...],
+    clock: Callable[[], datetime],
+) -> AccountingRuntime:
+    store = SqliteAccountingStore(accounting_path)
+    await store.initialize()
+    runtime = AccountingRuntime(
+        store=store,
+        reconstructor=CombinedLedgerReconstructor(),
+    )
+    await runtime.initialize()
+    selected_quotes = tuple(
+        quote
+        for quote in option_quotes
+        if quote.symbol in {option.long_symbol, option.short_symbol}
+    )
+    await _record_option_quotes(runtime, selected_quotes, option.cycle_id, 1_000)
+    await _recover_confirmed_executions(
+        accounting=runtime,
+        execution_store=execution_store,
+        cycle_id=option.cycle_id,
+        cycle_number=cycle_number,
+        strategy_instance=strategy_instance,
+        clock=clock,
+    )
+    return runtime
+
+
+async def _execution_classifier(
+    *,
+    store: SqliteExecutionStore,
+    cycle_id: str,
+    cycle_number: int,
+    strategy_instance: str,
+) -> PrivateExecutionClassifier:
+    reference_prices = {
+        request.order_link_id: Price(request.trigger_price)
+        for request in await store.load_all_order_intents()
+        if request.trigger_price is not None
+    }
+    return PrivateExecutionClassifier(
+        cycle_id=cycle_id,
+        cycle_number=cycle_number,
+        strategy_instance=strategy_instance,
+        reference_prices=reference_prices,
+    )
+
+
+async def _recover_confirmed_executions(
+    *,
+    accounting: AccountingRuntime,
+    execution_store: SqliteExecutionStore,
+    cycle_id: str,
+    cycle_number: int,
+    strategy_instance: str,
+    clock: Callable[[], datetime],
+) -> None:
+    executions: list[ExecutionUpdate] = []
+    for execution in await execution_store.load_all_executions():
+        try:
+            client_id = ClientOrderId.parse(execution.order_link_id)
+        except ValueError:
+            continue
+        if (
+            client_id.strategy_instance == strategy_instance
+            and client_id.cycle == cycle_number
+        ):
+            executions.append(execution)
+    if not executions:
+        return
+    payload = "\n".join(
+        "|".join(
+            (
+                execution.execution_id,
+                execution.order_id,
+                execution.order_link_id,
+                execution.symbol,
+                execution.side,
+                str(execution.price),
+                str(execution.quantity),
+                str(execution.fee),
+                execution.executed_at.isoformat(),
+            )
+        )
+        for execution in executions
+    )
+    batch = ExecutionUpdateBatch(
+        executions=tuple(executions),
+        received_at=clock(),
+        raw_payload_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    )
+    classifier = await _execution_classifier(
+        store=execution_store,
+        cycle_id=cycle_id,
+        cycle_number=cycle_number,
+        strategy_instance=strategy_instance,
+    )
+    await accounting.apply_rest_update_batch(batch, classifier)
+
+
+async def _record_option_quotes(
+    accounting: AccountingRuntime,
+    quotes: tuple[OptionMarketQuote, ...],
+    cycle_id: str,
+    maximum_age_ms: int,
+) -> None:
+    if maximum_age_ms <= 0:
+        raise ValueError("maximum option quote age must be positive")
+    for quote in quotes:
+        if quote.bid_price is None or quote.ask_price is None:
+            continue
+        identity = "|".join(
+            (
+                cycle_id,
+                quote.symbol,
+                quote.timestamp_utc.isoformat(),
+                str(quote.bid_price),
+                str(quote.ask_price),
+                str(quote.mark_price),
+            )
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        await accounting.apply_event(
+            OptionQuoteRecorded(
+                event_id=f"option-quote:{digest}",
+                event_version=1,
+                cycle_id=cycle_id,
+                timestamp=quote.timestamp_utc,
+                source=EventSource.SYSTEM,
+                correlation_id=digest,
+                symbol=quote.symbol,
+                bid=Price(quote.bid_price),
+                ask=Price(quote.ask_price),
+                mark=Price(quote.mark_price),
+                valid_until=quote.timestamp_utc
+                + timedelta(milliseconds=maximum_age_ms),
+            )
+        )
+
+
 async def _reconcile_runtime(
     journal: DemoRuntimeJournal,
     store: SqliteExecutionStore,
@@ -1309,6 +1699,31 @@ async def _reconcile_runtime(
     return result.trading_allowed
 
 
+async def _reconcile_accounting_runtime(
+    *,
+    accounting: AccountingRuntime,
+    private: BybitPrivateRestClient,
+    cycle_number: int,
+    strategy_instance: str,
+    clock: Callable[[], datetime],
+) -> bool:
+    snapshot = await BybitPrivateStateReader(
+        trading=private,
+        account=private,
+        clock=clock,
+    ).capture()
+    result = await accounting.reconcile(
+        state_reader=_CapturedAccountingReader(
+            snapshot,
+            cycle_number=cycle_number,
+            strategy_instance=strategy_instance,
+            funding_pnl=accounting.state.funding_pnl,
+        ),
+        clock=clock,
+    )
+    return result.report.trading_allowed
+
+
 def _next_cycle_number(requests: tuple[Any, ...]) -> int:
     cycles: list[int] = []
     for request in requests:
@@ -1322,6 +1737,22 @@ def _next_cycle_number(requests: tuple[Any, ...]) -> int:
     if cycle > 9_999:
         raise RuntimeError("demo strategy exhausted cycle IDs")
     return cycle
+
+
+def _belongs_to_cycle(
+    order_link_id: str,
+    *,
+    cycle_number: int,
+    strategy_instance: str,
+) -> bool:
+    try:
+        parsed = ClientOrderId.parse(order_link_id)
+    except ValueError:
+        return False
+    return (
+        parsed.cycle == cycle_number
+        and parsed.strategy_instance == strategy_instance
+    )
 
 
 def _order_id(

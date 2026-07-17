@@ -77,6 +77,13 @@ class CombinedLedgerState:
     def to_dict(self) -> dict[str, object]:
         return {
             "as_of": self.as_of.isoformat(),
+            "option_long_open_quantity": str(self.option.long.open_quantity),
+            "option_short_open_quantity": str(self.option.short.open_quantity),
+            "option_matched_open_quantity": str(self.option.matched_quantity),
+            "hedge_open_quantity": str(self.hedge.open_quantity),
+            "hedge_open_lot_ids": [
+                lot.lot_id for lot in self.hedge.lots if lot.open_quantity > ZERO
+            ],
             "option_realized_pnl": str(self.option_realized_pnl.value),
             "option_open_mark_pnl": str(self.option_open_mark_pnl.value),
             "option_open_liquidation_pnl": str(self.option_open_liquidation_pnl.value),

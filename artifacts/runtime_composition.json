@@ -1,11 +1,11 @@
 {
-  "version": "M3.2",
+  "version": "M3.3",
   "scope": "offline-only composition contract",
   "runtime_facade": {
     "module": "eth_credit_hedge.application.authoritative_runtime",
     "class": "AuthoritativeStrategyRuntime",
     "factory": "assemble_authoritative_runtime",
-    "wiring_status": "allocator wiring is complete; façade consolidation is deferred to Plans 3.3-3.7"
+    "wiring_status": "allocator and startup reconciliation wiring are complete; façade consolidation is deferred to Plans 3.4-3.7"
   },
   "authorities": {
     "configuration": "AuthoritativeStrategyRuntime.configuration -> RuntimeConfig/EnvironmentProfile",
@@ -54,7 +54,9 @@
     "NetPositionAllocator": [
       "src/eth_credit_hedge/application/hedge_lot_allocation.py"
     ],
-    "StartupReconciliationService": []
+    "StartupReconciliationService": [
+      "src/eth_credit_hedge/application/demo_strategy_runtime.py"
+    ]
   },
   "observable_runtime_facts": [
     "DemoRuntimeJournal events and snapshots",

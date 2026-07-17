@@ -56,6 +56,24 @@ class DemoRuntimeJournal:
     def last_event_sequence(self) -> int:
         return self._last_event_sequence
 
+    @property
+    def store(self) -> JournalPersistencePort:
+        """Persistence boundary shared with the reconciliation authority."""
+        return self._store
+
+    def next_event_id(self) -> str:
+        """Reserve the journal's configured event-ID namespace for a delegate."""
+        return self._event_id_factory()
+
+    def apply_reconciliation_snapshot(self, snapshot: CycleSnapshot) -> None:
+        """Adopt the durable state written by the reconciliation authority."""
+        if snapshot.cycle_id != self._state.cycle_id:
+            raise ValueError("reconciliation snapshot cycle differs from journal")
+        if snapshot.last_event_sequence < self._last_event_sequence:
+            raise ValueError("reconciliation snapshot moves journal backwards")
+        self._state = demo_runtime_state_from_payload(snapshot.state)
+        self._last_event_sequence = snapshot.last_event_sequence
+
     @classmethod
     async def create(
         cls,

@@ -503,3 +503,58 @@ def test_startup_durably_suspends_on_dangerous_position_mismatch(
         assert events[-1].event_type is JournalEventType.TRADING_SUSPENDED
 
     asyncio.run(exercise())
+
+
+def test_startup_reloads_persisted_recovered_execution_before_allowing_entry(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        journal = SqliteJournalStore(tmp_path / "journal.sqlite3")
+        await journal.initialize()
+        execution = ExecutionUpdate(
+            execution_id="recovered-entry-fill",
+            order_id="entry-order",
+            order_link_id=ENTRY_ID,
+            symbol="ETHUSDT",
+            side="Sell",
+            price=Decimal("3000"),
+            quantity=Decimal("0.010"),
+            fee=Decimal("0.003"),
+            is_maker=False,
+            executed_at=NOW,
+        )
+        store = FakeExecutionRecoveryStore(local_state())
+        recovered: list[str] = []
+
+        async def recover(snapshot: PrivateAccountSnapshot) -> None:
+            recovered.extend(item.execution_id for item in snapshot.executions)
+            store.local = replace(store.local, executions=snapshot.executions)
+
+        service = StartupReconciliationService(
+            execution_store=store,
+            journal_store=journal,
+            replay_service=StartupReplayService(
+                store=journal,
+                reducer=lambda state, event: state,
+            ),
+            private_reader=StaticPrivateReader(
+                exchange_snapshot(executions=(execution,))
+            ),
+            expected_option_positions=(),
+            clock=lambda: NOW,
+            event_id_factory=lambda event_type: f"event-{event_type.value}",
+            after_capture=recover,
+        )
+
+        result = await service.reconcile(
+            cycle_id="cycle-0001",
+            strategy_instance="01",
+            cycle_number=1,
+        )
+
+        assert recovered == ["recovered-entry-fill"]
+        assert result.local.executions == (execution,)
+        assert result.report.status is ReconciliationStatus.MATCHED
+        assert result.report.trading_allowed
+
+    asyncio.run(exercise())

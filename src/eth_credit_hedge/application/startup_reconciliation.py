@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -23,6 +23,7 @@ from eth_credit_hedge.domain.execution import (
 from eth_credit_hedge.domain.live_execution import EntryExecutionSnapshot
 from eth_credit_hedge.domain.journal import (
     CycleSnapshot,
+    JournalEvent,
     JournalEventType,
     PendingJournalEvent,
 )
@@ -105,6 +106,12 @@ class StartupReconciliationService:
         expected_option_positions: tuple[ExpectedPosition, ...],
         clock: Callable[[], datetime],
         event_id_factory: Callable[[JournalEventType], str],
+        after_capture: (
+            Callable[[PrivateAccountSnapshot], Awaitable[None]] | None
+        ) = None,
+        state_reducer: (
+            Callable[[dict[str, object], JournalEvent], dict[str, object]] | None
+        ) = None,
     ) -> None:
         self._execution_store = execution_store
         self._journal_store = journal_store
@@ -113,6 +120,8 @@ class StartupReconciliationService:
         self._expected_option_positions = tuple(expected_option_positions)
         self._clock = clock
         self._event_id_factory = event_id_factory
+        self._after_capture = after_capture
+        self._state_reducer = state_reducer
 
     async def reconcile(
         self,
@@ -122,20 +131,10 @@ class StartupReconciliationService:
         cycle_number: int,
     ) -> StartupReconciliationResult:
         replay = await self._replay_service.rebuild(cycle_id)
-        local = LocalExecutionRecoveryState(
-            order_intents=(
-                await self._execution_store.load_all_order_intents()
-            ),
-            entry_snapshots=(
-                await self._execution_store.load_all_entry_snapshots()
-            ),
-            protection_snapshots=(
-                await self._execution_store.load_all_protection_snapshots()
-            ),
-            expected_option_positions=self._expected_option_positions,
-            executions=await self._execution_store.load_all_executions(),
-        )
         exchange = await self._private_reader.capture()
+        if self._after_capture is not None:
+            await self._after_capture(exchange)
+        local = await self._load_local_state()
         report = evaluate_startup_reconciliation(
             local,
             exchange,
@@ -143,25 +142,6 @@ class StartupReconciliationService:
             cycle_number=cycle_number,
         )
         committed_at = self._clock()
-        state = dict(replay.state)
-        state["trading_allowed"] = report.trading_allowed
-        state["reconciliation_status"] = report.status.value
-        state["reconciliation_differences"] = [
-            {
-                "kind": difference.kind.value,
-                "detail": difference.detail,
-                "order_link_id": difference.order_link_id,
-            }
-            for difference in report.differences
-        ]
-        state["repair_actions"] = [
-            {
-                "kind": action.kind.value,
-                "detail": action.detail,
-                "order_link_id": action.order_link_id,
-            }
-            for action in report.repair_actions
-        ]
         event_type = (
             JournalEventType.RECONCILIATION_COMPLETED
             if report.trading_allowed
@@ -182,6 +162,41 @@ class StartupReconciliationService:
             causation_id=None,
             correlation_id=f"{cycle_id}-startup-reconciliation",
         )
+        state = dict(replay.state)
+        if self._state_reducer is not None:
+            state = self._state_reducer(
+                state,
+                JournalEvent(
+                    sequence=replay.last_event_sequence + 1,
+                    event_id=event.event_id,
+                    event_type=event.event_type,
+                    event_version=event.event_version,
+                    cycle_id=event.cycle_id,
+                    level_id=event.level_id,
+                    timestamp_utc=event.timestamp_utc,
+                    payload=event.payload,
+                    causation_id=event.causation_id,
+                    correlation_id=event.correlation_id,
+                ),
+            )
+        state["trading_allowed"] = report.trading_allowed
+        state["reconciliation_status"] = report.status.value
+        state["reconciliation_differences"] = [
+            {
+                "kind": difference.kind.value,
+                "detail": difference.detail,
+                "order_link_id": difference.order_link_id,
+            }
+            for difference in report.differences
+        ]
+        state["repair_actions"] = [
+            {
+                "kind": action.kind.value,
+                "detail": action.detail,
+                "order_link_id": action.order_link_id,
+            }
+            for action in report.repair_actions
+        ]
         _, committed_snapshot = await self._journal_store.append_event_and_snapshot(
             event,
             CycleSnapshot(
@@ -198,6 +213,21 @@ class StartupReconciliationService:
             exchange=exchange,
             report=report,
             committed_snapshot=committed_snapshot,
+        )
+
+    async def _load_local_state(self) -> LocalExecutionRecoveryState:
+        return LocalExecutionRecoveryState(
+            order_intents=(
+                await self._execution_store.load_all_order_intents()
+            ),
+            entry_snapshots=(
+                await self._execution_store.load_all_entry_snapshots()
+            ),
+            protection_snapshots=(
+                await self._execution_store.load_all_protection_snapshots()
+            ),
+            expected_option_positions=self._expected_option_positions,
+            executions=await self._execution_store.load_all_executions(),
         )
 
 

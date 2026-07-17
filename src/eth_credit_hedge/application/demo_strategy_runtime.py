@@ -17,7 +17,6 @@ from typing import Any, Protocol, TYPE_CHECKING
 from eth_credit_hedge.application.demo_runtime_journal import DemoRuntimeJournal
 from eth_credit_hedge.application.accounting_runtime import AccountingRuntime
 from eth_credit_hedge.application.hedge_lot_allocation import (
-    AllocationReconciliationError,
     HedgeLotAllocationService,
 )
 from eth_credit_hedge.application.net_position_allocator import NetPositionAllocator
@@ -27,6 +26,7 @@ from eth_credit_hedge.application.private_execution_accounting import (
 from eth_credit_hedge.application.demo_runtime_state import (
     DemoLevelRuntimeState,
     DemoRuntimeState,
+    reduce_demo_runtime_state,
 )
 from eth_credit_hedge.application.kill_switch import (
     KillSwitchController,
@@ -47,9 +47,13 @@ from eth_credit_hedge.application.option_spread_entry import (
 from eth_credit_hedge.application.protective_exits import ProtectiveExitService
 from eth_credit_hedge.application.read_only_reconciliation import (
     BybitPrivateStateReader,
+    ExpectedPosition,
     PrivateAccountSnapshot,
-    evaluate_private_snapshot,
 )
+from eth_credit_hedge.application.startup_reconciliation import (
+    StartupReconciliationService,
+)
+from eth_credit_hedge.application.startup_replay import StartupReplayService
 from eth_credit_hedge.application.runtime_risk_state import RuntimeRiskStateBuilder
 from eth_credit_hedge.application.same_level_recovery import SameLevelRecoveryService
 from eth_credit_hedge.config.bybit import load_bybit_demo_profile
@@ -338,10 +342,6 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
         cycle_number = ClientOrderId.parse(option.long_order_link_id).cycle
 
     instrument = await public_rest.get_instrument("ETHUSDT")
-    matched = await _reconcile_runtime(journal, execution_store, private, now)
-    if not matched:
-        raise RuntimeError("post-option startup reconciliation did not match")
-
     accounting = await _initialize_accounting_runtime(
         execution_store=execution_store,
         accounting_path=_accounting_path(deployment.database_path),
@@ -356,6 +356,29 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
         store=execution_store,
         clock=now,
     )
+    reconciliation = _startup_reconciliation_service(
+        journal=journal,
+        store=execution_store,
+        private=private,
+        clock=now,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+        accounting=accounting,
+        allocation_service=allocation,
+        expected_option_positions=tuple(
+            position
+            for position in await _expected_durable_positions(execution_store)
+            if position.category == "option"
+        ),
+    )
+    matched = await _reconcile_runtime(
+        journal,
+        reconciliation,
+        cycle_number=cycle_number,
+        strategy_instance=STRATEGY_INSTANCE,
+    )
+    if not matched:
+        raise RuntimeError("post-option startup reconciliation did not match")
     if not await _reconcile_accounting_runtime(
         accounting=accounting,
         private=private,
@@ -453,6 +476,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             accounting=accounting,
             accounting_strategy_instance=STRATEGY_INSTANCE,
             allocation_service=allocation,
+            reconciliation=reconciliation,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -635,11 +659,6 @@ async def run_simulated_strategy_command(
             clock=lambda: exchange.current_time_utc,
             event_id_factory=_deterministic_event_id_factory(),
         )
-    await journal.append(
-        JournalEventType.RECONCILIATION_COMPLETED,
-        payload={"status": "MATCHED"},
-        event_id="sim-reconciled",
-    )
     accounting = await _initialize_accounting_runtime(
         execution_store=execution_store,
         accounting_path=state_directory / "accounting.sqlite3",
@@ -654,6 +673,28 @@ async def run_simulated_strategy_command(
         store=execution_store,
         clock=lambda: exchange.current_time_utc,
     )
+    reconciliation = _startup_reconciliation_service(
+        journal=journal,
+        store=execution_store,
+        private=exchange,
+        clock=lambda: exchange.current_time_utc,
+        cycle_number=1,
+        strategy_instance="SIM",
+        accounting=accounting,
+        allocation_service=allocation,
+        expected_option_positions=tuple(
+            position
+            for position in await _expected_durable_positions(execution_store)
+            if position.category == "option"
+        ),
+    )
+    if not await _reconcile_runtime(
+        journal,
+        reconciliation,
+        cycle_number=1,
+        strategy_instance="SIM",
+    ):
+        raise RuntimeError("simulated startup reconciliation did not match")
     operations = MutableOperationalState(
         maximum_market_data_age_ms=deployment.maximum_market_data_age_ms,
         clock=lambda: exchange.current_time_utc,
@@ -732,6 +773,7 @@ async def run_simulated_strategy_command(
             accounting_strategy_instance="SIM",
             accounting_reconciliation_enabled=False,
             allocation_service=allocation,
+            reconciliation=reconciliation,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -1096,6 +1138,7 @@ async def _run_supervised_session(
     accounting_strategy_instance: str,
     accounting_reconciliation_enabled: bool = True,
     allocation_service: HedgeLotAllocationService | None = None,
+    reconciliation: StartupReconciliationService | None = None,
 ) -> None:
     tasks: list[asyncio.Task[None]] = []
 
@@ -1221,6 +1264,7 @@ async def _run_supervised_session(
                 cycle_number,
                 accounting_strategy_instance,
                 allocation_service,
+                reconciliation,
             )
         )
         await _wait_for_private_reconciliation(private_stream)
@@ -1246,6 +1290,7 @@ async def _run_supervised_session(
                 cycle_number=cycle_number,
                 strategy_instance=accounting_strategy_instance,
                 allocation_service=allocation_service,
+                reconciliation=reconciliation,
                 accounting_reconciliation_enabled=(
                     accounting_reconciliation_enabled
                 ),
@@ -1354,22 +1399,18 @@ async def _private_loop(
     cycle_number: int,
     strategy_instance: str,
     allocation_service: HedgeLotAllocationService | None = None,
+    reconciliation: StartupReconciliationService | None = None,
 ) -> None:
     async for event in stream.stream_events():
         if isinstance(event, PrivateConnectionEvent):
             authenticated = event.state is PrivateConnectionState.AUTHENTICATED
             operations.mark_private(authenticated)
             if authenticated:
-                matched = (
-                    await _reconcile_runtime(journal, store, private, clock)
-                    if allocation_service is None
-                    else await _reconcile_runtime(
-                        journal,
-                        store,
-                        private,
-                        clock,
-                        allocation_service=allocation_service,
-                    )
+                matched = await _reconcile_runtime(
+                    journal,
+                    reconciliation,
+                    cycle_number,
+                    strategy_instance,
                 )
                 operations.update_runtime(journal.state)
                 operations.mark_reconciliation(matched, "MATCHED" if matched else "MISMATCH")
@@ -1416,24 +1457,12 @@ async def _reconciliation_loop(
     strategy_instance: str | None = None,
     allocation_service: HedgeLotAllocationService | None = None,
     accounting_reconciliation_enabled: bool = False,
+    reconciliation: StartupReconciliationService | None = None,
 ) -> None:
     if maximum_failures <= 0:
         raise ValueError("maximum reconciliation failures must be positive")
     while True:
         await sleeper(5)
-        if accounting is not None:
-            if cycle_id is None or cycle_number is None or strategy_instance is None:
-                raise ValueError("accounting reconciliation identifiers are required")
-            await _recover_confirmed_executions(
-                accounting=accounting,
-                execution_store=store,
-                cycle_id=cycle_id,
-                cycle_number=cycle_number,
-                strategy_instance=strategy_instance,
-                clock=clock,
-                allocation_service=allocation_service,
-            )
-            operations.update_accounting(accounting.state)
         accounting_matched = True
         if accounting is not None and accounting_reconciliation_enabled:
             if cycle_number is None or strategy_instance is None:
@@ -1445,17 +1474,14 @@ async def _reconciliation_loop(
                 strategy_instance=strategy_instance,
                 clock=clock,
             )
-        runtime_matched = (
-            await _reconcile_runtime(journal, store, private, clock)
-            if allocation_service is None
-            else await _reconcile_runtime(
-                journal,
-                store,
-                private,
-                clock,
-                allocation_service=allocation_service,
-            )
+        runtime_matched = await _reconcile_runtime(
+            journal,
+            reconciliation,
+            1 if cycle_number is None else cycle_number,
+            "" if strategy_instance is None else strategy_instance,
         )
+        if accounting is not None:
+            operations.update_accounting(accounting.state)
         matched = runtime_matched and accounting_matched
         operations.update_runtime(journal.state)
         operations.mark_reconciliation(matched, "MATCHED" if matched else "MISMATCH")
@@ -1739,52 +1765,103 @@ async def _record_option_quotes(
         )
 
 
-async def _reconcile_runtime(
+def _startup_reconciliation_service(
+    *,
     journal: DemoRuntimeJournal,
     store: SqliteExecutionStore,
     private: BybitPrivateRestClient,
     clock: Callable[[], datetime],
-    *,
-    allocation_service: HedgeLotAllocationService | None = None,
-) -> bool:
-    exchange = await BybitPrivateStateReader(
-        trading=private,
-        account=private,
-        clock=clock,
-    ).capture()
-    known = frozenset(
-        request.order_link_id for request in await store.load_all_order_intents()
-    )
-    result = evaluate_private_snapshot(
-        exchange,
-        known_order_link_ids=known,
-        expected_positions=await _expected_durable_positions(store),
-    )
-    if result.trading_allowed and allocation_service is not None:
-        try:
-            await allocation_service.apply_confirmed_executions(exchange.executions)
-            await allocation_service.reconcile_exchange_position(exchange.positions)
-        except (AllocationReconciliationError, ValueError) as error:
-            await journal.append(
-                JournalEventType.TRADING_SUSPENDED,
-                payload={"reason": f"hedge lot reconciliation fault: {error}"},
+    cycle_number: int,
+    strategy_instance: str,
+    accounting: AccountingRuntime,
+    allocation_service: HedgeLotAllocationService | None,
+    expected_option_positions: tuple[ExpectedPosition, ...],
+) -> StartupReconciliationService:
+    """Compose the sole runtime reconciliation authority and its delegates."""
+
+    async def recover(snapshot: PrivateAccountSnapshot) -> None:
+        known_order_link_ids = {
+            intent.order_link_id for intent in await store.load_all_order_intents()
+        }
+        for execution in snapshot.executions:
+            if execution.order_link_id not in known_order_link_ids:
+                continue
+            await store.record_execution(
+                execution,
+                received_at=clock(),
+                payload_hash=_execution_payload_hash(execution),
             )
-            return False
-    if result.trading_allowed:
-        await journal.append(
-            JournalEventType.RECONCILIATION_COMPLETED,
-            payload={"status": "MATCHED"},
+        await _recover_confirmed_executions(
+            accounting=accounting,
+            execution_store=store,
+            cycle_id=journal.state.cycle_id,
+            cycle_number=cycle_number,
+            strategy_instance=strategy_instance,
+            clock=clock,
+            allocation_service=allocation_service,
         )
-    else:
+        if allocation_service is not None:
+            await allocation_service.reconcile_exchange_position(snapshot.positions)
+
+    return StartupReconciliationService(
+        execution_store=store,
+        journal_store=journal.store,
+        replay_service=StartupReplayService(
+            store=journal.store,
+            reducer=reduce_demo_runtime_state,
+        ),
+        private_reader=BybitPrivateStateReader(
+            trading=private,
+            account=private,
+            clock=clock,
+        ),
+        expected_option_positions=expected_option_positions,
+        clock=clock,
+        event_id_factory=lambda _: journal.next_event_id(),
+        after_capture=recover,
+        state_reducer=reduce_demo_runtime_state,
+    )
+
+
+async def _reconcile_runtime(
+    journal: DemoRuntimeJournal,
+    reconciliation: StartupReconciliationService | None,
+    cycle_number: int,
+    strategy_instance: str,
+) -> bool:
+    if reconciliation is None:
+        raise RuntimeError("authoritative reconciliation service is required")
+    try:
+        result = await reconciliation.reconcile(
+            cycle_id=journal.state.cycle_id,
+            cycle_number=cycle_number,
+            strategy_instance=strategy_instance,
+        )
+    except Exception as error:
         await journal.append(
             JournalEventType.TRADING_SUSPENDED,
-            payload={
-                "reason": "; ".join(
-                    difference.detail for difference in result.differences
-                )
-            },
+            payload={"reason": f"reconciliation query or recovery failed: {error}"},
         )
-    return result.trading_allowed
+        return False
+    journal.apply_reconciliation_snapshot(result.committed_snapshot)
+    return result.report.trading_allowed
+
+
+def _execution_payload_hash(execution: ExecutionUpdate) -> str:
+    payload = "|".join(
+        (
+            execution.execution_id,
+            execution.order_id,
+            execution.order_link_id,
+            execution.symbol,
+            execution.side,
+            str(execution.price),
+            str(execution.quantity),
+            str(execution.fee),
+            execution.executed_at.isoformat(),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 async def _reconcile_accounting_runtime(

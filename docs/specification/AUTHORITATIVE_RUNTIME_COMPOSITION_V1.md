@@ -4,8 +4,9 @@
 
 This is the Plan 3.1 ownership contract for the offline-only Milestone 3
 runtime. It defines the target graph and construction boundary. Plan 3.2
-connects allocator state; lifecycle accounting and startup reconciliation
-remain migrations for Plans 3.3 through 3.7.
+connects allocator state; Plan 3.3 connects startup and reconnect
+reconciliation. Lifecycle accounting remains a migration for Plans 3.4 through
+3.7.
 
 The target is one `AuthoritativeStrategyRuntime` assembled through dependency
 injection. Simulated and future demo execution must supply the same graph; only
@@ -30,7 +31,7 @@ network access or exchange mutations.
 | Recovery debt | `AuthoritativeStrategyRuntime.accounting` -> combined-ledger projection | Target authority; journal-side debt remains legacy until Plan 3.4. |
 | Risk | `AuthoritativeStrategyRuntime.risk` -> risk service pair | Existing owner pair; complete configuration wiring is Plan 3.5. |
 | Persistence | `AuthoritativeStrategyRuntime.coordinator` -> persistence ports | Existing durable stores; ownership convergence is deferred. |
-| Reconciliation | `AuthoritativeStrategyRuntime.reconciliation` -> `StartupReconciliationService` | Accepted unit authority, not yet production-connected; Plan 3.3. |
+| Reconciliation | `AuthoritativeStrategyRuntime.reconciliation` -> `StartupReconciliationService` | Production-connected by both demo and simulated roots. It replays durable state, captures private facts, delegates raw-fill/allocator recovery, persists a decision, and permits entries only after `MATCHED`. |
 | Health | `AuthoritativeStrategyRuntime.health` -> `MutableOperationalState` | Existing health projection; legacy fallbacks are removed in Plan 3.5. |
 | Kill switch | `AuthoritativeStrategyRuntime.shutdown` -> `KillSwitchController` | Existing owner. |
 | Shutdown | `AuthoritativeStrategyRuntime.shutdown` -> `StrategyCloseService` | Existing owner; authoritative final reconciliation is Plan 3.5. |
@@ -50,12 +51,13 @@ accounting, allocator, reconciliation, risk, health, and shutdown authorities.
 dependencies and does not secretly create another authority.
 
 The approved future composition root will construct the runtime façade once and
-inject its members into consumers. The current `demo_strategy_runtime` has not
-yet switched to the façade because startup reconciliation remains unused. The
-allocator is now constructed once by each current environment composition root,
-then injected into lifecycle, private execution, recovery, reconciliation, and
+inject its members into consumers. The current `demo_strategy_runtime`
+constructs one `StartupReconciliationService` for each cycle and injects it into
+the startup, private-reconnect, and periodic reconciliation callers. The
+allocator is constructed once by each current environment composition root and
+is injected into lifecycle, private execution, reconciliation recovery, and
 shutdown. The checked-in manifest records the remaining façade migration as
-deferred to Plans 3.3-3.7.
+deferred to Plans 3.4-3.7.
 
 ## Environment ports
 
@@ -93,8 +95,6 @@ adapters are inventory only and must not be contacted during Milestone 3.
 
 The following remain deliberately visible until their named migration plans:
 
-- `demo_strategy_runtime._reconcile_runtime` uses `evaluate_private_snapshot`
-  rather than `StartupReconciliationService` (Plan 3.3).
 - `DemoRuntimeState` retains `realized_pnl`, `confirmed_debt`, and
   `daily_realized_pnl`; `RuntimeRiskStateBuilder`, health, and the live
   coordinator can read these legacy projections (Plans 3.4 and 3.5).
@@ -123,6 +123,11 @@ Current observable events include journal events such as
 ledger events and digests; health snapshots; simulated exchange event logs; and
 structured runtime logs. Plan 3.1 records the ownership contract only and adds
 no new lifecycle event.
+
+Plan 3.3 persists each reconciliation decision in the same journal snapshot as
+its event: status, differences, repair actions, and entry permission are replay
+facts. Query or recovery failures are represented by `TRADING_SUSPENDED` and
+block subsequent entry.
 
 ## Constructor guard
 

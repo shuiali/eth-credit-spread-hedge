@@ -17,6 +17,7 @@ from eth_credit_hedge.domain.accounting.errors import (
 from eth_credit_hedge.domain.accounting.fills import (
     ConfirmedExecution,
     InstrumentKind,
+    Side,
     required_text,
     utc_timestamp,
 )
@@ -40,6 +41,12 @@ class HedgeRole(str, Enum):
     RECOVERY = "RECOVERY"
 
 
+class ExitReason(str, Enum):
+    TAKE_PROFIT = "TAKE_PROFIT"
+    STOP = "STOP"
+    EMERGENCY = "EMERGENCY"
+
+
 class FeeOwner(str, Enum):
     OPTION = "OPTION"
     HEDGE = "HEDGE"
@@ -51,6 +58,17 @@ class ReferenceType(str, Enum):
     BEST_BID_ASK = "BEST_BID_ASK"
     MARK = "MARK"
     EXPECTED_FILL = "EXPECTED_FILL"
+
+
+@dataclass(frozen=True, slots=True)
+class FundingAllocation:
+    lot_id: str
+    amount: Money
+
+    def __post_init__(self) -> None:
+        required_text(self.lot_id, "funding allocation lot ID")
+        if not isinstance(self.amount, Money):
+            raise AccountingContractError("funding allocation amount is invalid")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -111,6 +129,9 @@ class HedgeExecutionRecorded(EventMetadata):
     lot_id: str
     attempt: int
     role: HedgeRole
+    exit_reason: ExitReason | None = None
+    reference_type: ReferenceType | None = None
+    reference_price: Price | None = None
 
     def __post_init__(self) -> None:
         EventMetadata.__post_init__(self)
@@ -125,6 +146,18 @@ class HedgeExecutionRecorded(EventMetadata):
             raise AccountingContractError("attempt must be positive")
         if not isinstance(self.role, HedgeRole):
             raise AccountingContractError("hedge role is invalid")
+        if self.exit_reason is not None and not isinstance(self.exit_reason, ExitReason):
+            raise AccountingContractError("hedge exit reason is invalid")
+        if self.execution.side is Side.SELL and self.exit_reason is not None:
+            raise AccountingContractError("hedge entry cannot have an exit reason")
+        if self.execution.side is Side.BUY and self.exit_reason is None:
+            raise AccountingContractError("hedge exit requires an exit reason")
+        if self.reference_type is not None and not isinstance(self.reference_type, ReferenceType):
+            raise AccountingContractError("hedge reference type is invalid")
+        if self.reference_price is not None and not isinstance(self.reference_price, Price):
+            raise AccountingContractError("hedge reference price is invalid")
+        if (self.reference_type is None) != (self.reference_price is None):
+            raise AccountingContractError("hedge reference type and price must be paired")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -150,6 +183,7 @@ class FundingRecorded(EventMetadata):
     position_quantity: Quantity
     rate: Decimal
     amount: Money
+    allocations: tuple[FundingAllocation, ...] = ()
 
     def __post_init__(self) -> None:
         EventMetadata.__post_init__(self)
@@ -160,6 +194,12 @@ class FundingRecorded(EventMetadata):
             raise AccountingContractError("funding rate must be a finite Decimal")
         if not isinstance(self.amount, Money):
             raise AccountingContractError("funding amount is invalid")
+        allocations = tuple(self.allocations)
+        if len({allocation.lot_id for allocation in allocations}) != len(allocations):
+            raise AccountingContractError("funding allocation lot IDs must be unique")
+        if allocations and sum((allocation.amount.value for allocation in allocations), Decimal("0")) != self.amount.value:
+            raise AccountingContractError("funding allocations must equal funding amount")
+        object.__setattr__(self, "allocations", allocations)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

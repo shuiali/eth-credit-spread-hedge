@@ -22,6 +22,7 @@ from eth_credit_hedge.domain.accounting.fills import (
     utc_timestamp,
 )
 from eth_credit_hedge.domain.strategy_math.units import Money, Price, Quantity
+from eth_credit_hedge.domain.accounting.recovery_projection import HedgeAttemptKey
 
 
 class EventSource(str, Enum):
@@ -287,6 +288,54 @@ class RecoveryDebtChanged(EventMetadata):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RecoveryDebtIncremented(EventMetadata):
+    target: HedgeAttemptKey
+    source_hedge_lot_id: str
+    source_stop_execution_ids: tuple[str, ...]
+    amount: Money
+
+    def __post_init__(self) -> None:
+        EventMetadata.__post_init__(self)
+        if self.target.cycle_id != self.cycle_id or self.target.level_id != self.level_id:
+            raise AccountingContractError("recovery debt target must match event identity")
+        required_text(self.source_hedge_lot_id, "source hedge lot ID")
+        if not isinstance(self.amount, Money) or self.amount.value < 0:
+            raise AccountingContractError("recovery debt increment is invalid")
+        ids = tuple(self.source_stop_execution_ids)
+        if not ids or len(ids) != len(set(ids)):
+            raise AccountingContractError("source stop execution IDs are invalid")
+        for execution_id in ids:
+            required_text(execution_id, "source stop execution ID")
+        object.__setattr__(self, "source_stop_execution_ids", ids)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecoveryAllocationRecorded(EventMetadata):
+    target: HedgeAttemptKey
+    recovery_hedge_lot_id: str
+    gross_realized_recovery_profit: Money
+    fees: Money
+    funding: Money
+    allocated_amount: Money
+
+    def __post_init__(self) -> None:
+        EventMetadata.__post_init__(self)
+        if self.target.cycle_id != self.cycle_id or self.target.level_id != self.level_id:
+            raise AccountingContractError("recovery allocation target must match event identity")
+        required_text(self.recovery_hedge_lot_id, "recovery hedge lot ID")
+        if not all(isinstance(value, Money) for value in (
+            self.gross_realized_recovery_profit, self.fees, self.funding, self.allocated_amount,
+        )):
+            raise AccountingContractError("recovery allocation amounts are invalid")
+        if self.allocated_amount.value < 0:
+            raise AccountingContractError("recovery allocation cannot be negative")
+        if self.allocated_amount.value > (
+            self.gross_realized_recovery_profit.value - self.fees.value + self.funding.value
+        ):
+            raise AccountingContractError("recovery allocation exceeds actual net recovery profit")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MigratedFromLegacySnapshot(EventMetadata):
     """An explicit migration marker; it is never a synthetic raw execution."""
 
@@ -307,7 +356,8 @@ class MigratedFromLegacySnapshot(EventMetadata):
 AccountingEvent: TypeAlias = (
     OptionExecutionRecorded | HedgeExecutionRecorded | FeeRecorded | FundingRecorded
     | ReferencePriceRecorded | OptionQuoteRecorded | PositionReconciled
-    | AccountingSnapshotCreated | RecoveryDebtChanged | MigratedFromLegacySnapshot
+    | AccountingSnapshotCreated | RecoveryDebtChanged | RecoveryDebtIncremented
+    | RecoveryAllocationRecorded | MigratedFromLegacySnapshot
 )
 
 
@@ -431,6 +481,32 @@ def event_from_dict(payload: dict[str, object]) -> AccountingEvent:
             ),
             reason=_text(payload, "reason"),
         )
+    if event_type == "RecoveryDebtIncremented":
+        return RecoveryDebtIncremented(
+            **metadata,
+            target=HedgeAttemptKey(
+                cycle_id=_text(_object(payload, "target"), "cycle_id"),
+                level_id=_integer(_object(payload, "target"), "level_id"),
+                attempt=_integer(_object(payload, "target"), "attempt"),
+            ),
+            source_hedge_lot_id=_text(payload, "source_hedge_lot_id"),
+            source_stop_execution_ids=_texts(payload, "source_stop_execution_ids"),
+            amount=Money(_decimal(payload, "amount")),
+        )
+    if event_type == "RecoveryAllocationRecorded":
+        return RecoveryAllocationRecorded(
+            **metadata,
+            target=HedgeAttemptKey(
+                cycle_id=_text(_object(payload, "target"), "cycle_id"),
+                level_id=_integer(_object(payload, "target"), "level_id"),
+                attempt=_integer(_object(payload, "target"), "attempt"),
+            ),
+            recovery_hedge_lot_id=_text(payload, "recovery_hedge_lot_id"),
+            gross_realized_recovery_profit=Money(_decimal(payload, "gross_realized_recovery_profit")),
+            fees=Money(_decimal(payload, "fees")),
+            funding=Money(_decimal(payload, "funding")),
+            allocated_amount=Money(_decimal(payload, "allocated_amount")),
+        )
     if event_type == "MigratedFromLegacySnapshot":
         return MigratedFromLegacySnapshot(
             **metadata,
@@ -446,6 +522,13 @@ def event_from_dict(payload: dict[str, object]) -> AccountingEvent:
             ),
         )
     raise AccountingContractError(f"unsupported accounting event type: {event_type}")
+
+
+def _texts(payload: dict[str, object], field_name: str) -> tuple[str, ...]:
+    raw = payload.get(field_name)
+    if not isinstance(raw, list):
+        raise AccountingContractError(f"{field_name} must be a list")
+    return tuple(_text({"value": value}, "value") for value in raw)
 
 
 def _metadata(payload: dict[str, object]) -> dict[str, object]:

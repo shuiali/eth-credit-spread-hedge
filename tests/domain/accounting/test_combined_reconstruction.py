@@ -21,8 +21,11 @@ from eth_credit_hedge.domain.accounting.events import (
     EventSource,
     OptionExecutionRecorded,
     OptionLeg,
+    RecoveryAllocationRecorded,
+    RecoveryDebtIncremented,
     event_from_dict,
 )
+from eth_credit_hedge.domain.accounting.recovery_projection import HedgeAttemptKey
 from eth_credit_hedge.domain.accounting.fills import ConfirmedExecution, InstrumentKind, Side
 from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerReconstructor
 from eth_credit_hedge.domain.strategy_math.units import Money, Price, Quantity
@@ -108,6 +111,45 @@ def test_projected_recovery_cannot_settle_confirmed_debt() -> None:
             tuple(events[:-1]) + (projected_settlement,),
             _events("m2_4_option_quotes.jsonl"),  # type: ignore[arg-type]
         )
+
+
+def test_attempt_recovery_projection_keeps_levels_and_attempts_isolated() -> None:
+    first = HedgeAttemptKey("cycle-1", 1, 1)
+    second_attempt = HedgeAttemptKey("cycle-1", 1, 2)
+    other_level = HedgeAttemptKey("cycle-1", 2, 1)
+    events = (
+        _debt_increment("debt-1", first, "10"),
+        _debt_increment("debt-2", second_attempt, "4"),
+        _debt_increment("debt-3", other_level, "8"),
+        _allocation("allocation-1", first, "3"),
+    )
+    state = CombinedLedgerReconstructor().reconstruct(events)
+
+    level_one, level_two = state.recovery_level_projections
+    assert level_one.total_remaining_debt == Money(D("11"))
+    assert level_two.total_remaining_debt == Money(D("8"))
+    assert level_one.attempt_projections[0].remaining_debt == Money(D("7"))
+    assert level_one.attempt_projections[1].remaining_debt == Money(D("4"))
+    assert state.confirmed_recovery_debt == Money(D("19"))
+
+
+def _debt_increment(event_id: str, key: HedgeAttemptKey, amount: str) -> RecoveryDebtIncremented:
+    return RecoveryDebtIncremented(
+        event_id=event_id, event_version=1, cycle_id=key.cycle_id,
+        level_id=key.level_id, timestamp=NOW, source=EventSource.SYSTEM,
+        correlation_id=event_id, target=key, source_hedge_lot_id=f"lot-{event_id}",
+        source_stop_execution_ids=(f"stop-{event_id}",), amount=Money(D(amount)),
+    )
+
+
+def _allocation(event_id: str, key: HedgeAttemptKey, amount: str) -> RecoveryAllocationRecorded:
+    return RecoveryAllocationRecorded(
+        event_id=event_id, event_version=1, cycle_id=key.cycle_id,
+        level_id=key.level_id, timestamp=NOW, source=EventSource.SYSTEM,
+        correlation_id=event_id, target=key, recovery_hedge_lot_id="recovery-lot",
+        gross_realized_recovery_profit=Money(D(amount)), fees=Money(D("0")),
+        funding=Money(D("0")), allocated_amount=Money(D(amount)),
+    )
 
 
 def test_partial_option_closes_keep_gross_price_pnl_and_fees_separate() -> None:

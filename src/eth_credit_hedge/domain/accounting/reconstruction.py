@@ -26,7 +26,15 @@ from eth_credit_hedge.domain.accounting.events import (
     OptionQuoteRecorded,
     PositionReconciled,
     RecoveryDebtChanged,
+    RecoveryDebtIncremented,
+    RecoveryAllocationRecorded,
     canonical_event_json,
+)
+from eth_credit_hedge.domain.accounting.recovery_projection import (
+    AttemptRecoveryProjection,
+    AttemptRecoveryStatus,
+    HedgeAttemptKey,
+    LevelRecoveryProjection,
 )
 from eth_credit_hedge.domain.accounting.hedge_ledger import HedgeLedger, HedgeLedgerSnapshot
 from eth_credit_hedge.domain.accounting.option_ledger import OptionLedger, OptionLedgerSnapshot
@@ -72,7 +80,31 @@ class CombinedLedgerState:
     actual_recovery_allocations: Money
     confirmed_recovery_debt: Money
     debt_identity_residual: Money
+    recovery_level_projections: tuple[LevelRecoveryProjection, ...]
     ledger_digest: str
+
+    def debt_for_attempt(self, key: HedgeAttemptKey) -> Money:
+        for level in self.recovery_level_projections:
+            for attempt in level.attempt_projections:
+                if attempt.key == key:
+                    return attempt.remaining_debt
+        return Money(ZERO)
+
+    def debt_for_level(self, cycle_id: str, level_id: int) -> Money:
+        projection = self.projection_for_level(cycle_id, level_id)
+        return Money(ZERO) if projection is None else projection.total_remaining_debt
+
+    def projection_for_level(
+        self, cycle_id: str, level_id: int
+    ) -> LevelRecoveryProjection | None:
+        return next(
+            (
+                projection
+                for projection in self.recovery_level_projections
+                if projection.cycle_id == cycle_id and projection.level_id == level_id
+            ),
+            None,
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -111,6 +143,11 @@ class CombinedLedgerState:
             "actual_recovery_allocations": str(self.actual_recovery_allocations.value),
             "confirmed_recovery_debt": str(self.confirmed_recovery_debt.value),
             "debt_identity_residual": str(self.debt_identity_residual.value),
+            "recovery_level_projections": [
+                {"cycle_id": level.cycle_id, "level_id": level.level_id,
+                 "remaining_debt": str(level.total_remaining_debt.value)}
+                for level in self.recovery_level_projections
+            ],
             "ledger_digest": self.ledger_digest,
         }
 
@@ -150,6 +187,10 @@ class CombinedLedgerReconstructor:
         execution_cash_flow = ZERO
         debt_increments = ZERO
         recovery_allocations = ZERO
+        recovery_attempts: dict[
+            HedgeAttemptKey, tuple[Decimal, Decimal, list[str]]
+        ] = {}
+        recorded_recovery_profit = ZERO
         timestamps = [event.timestamp for event in ordered]
 
         for event in ordered:
@@ -171,6 +212,31 @@ class CombinedLedgerReconstructor:
             elif isinstance(event, RecoveryDebtChanged):
                 debt_increments += event.increment.value
                 recovery_allocations += event.actual_recovery_allocation.value
+            elif isinstance(event, RecoveryDebtIncremented):
+                increment, allocation, event_ids = recovery_attempts.get(
+                    event.target, (ZERO, ZERO, [])
+                )
+                recovery_attempts[event.target] = (
+                    increment + event.amount.value,
+                    allocation,
+                    [*event_ids, event.event_id],
+                )
+                debt_increments += event.amount.value
+            elif isinstance(event, RecoveryAllocationRecorded):
+                increment, allocation, event_ids = recovery_attempts.get(
+                    event.target, (ZERO, ZERO, [])
+                )
+                recovery_attempts[event.target] = (
+                    increment,
+                    allocation + event.allocated_amount.value,
+                    [*event_ids, event.event_id],
+                )
+                recovery_allocations += event.allocated_amount.value
+                recorded_recovery_profit += (
+                    event.gross_realized_recovery_profit.value
+                    - event.fees.value
+                    + event.funding.value
+                )
 
         quotes = tuple(option_quotes or ())
         if not all(isinstance(quote, OptionQuoteRecorded) for quote in quotes):
@@ -232,12 +298,38 @@ class CombinedLedgerReconstructor:
             ),
             ZERO,
         )
+        actual_recovery_profit = max(actual_recovery_profit, recorded_recovery_profit)
         if recovery_allocations > actual_recovery_profit:
             raise AccountingContractError(
                 "actual recovery allocations exceed realized recovery profit"
             )
         if confirmed_debt < ZERO:
             raise AccountingContractError("actual recovery allocations exceed confirmed debt")
+        attempts = tuple(
+            AttemptRecoveryProjection(
+                key=key,
+                debt_increments=Money(values[0]),
+                recovery_allocations=Money(values[1]),
+                remaining_debt=Money(values[0] - values[1]),
+                status=(AttemptRecoveryStatus.SETTLED if values[0] == values[1]
+                        else AttemptRecoveryStatus.OUTSTANDING),
+                source_event_ids=tuple(values[2]),
+            )
+            for key, values in sorted(recovery_attempts.items(), key=lambda item: (item[0].cycle_id, item[0].level_id, item[0].attempt))
+        )
+        if any(item.remaining_debt.value < ZERO for item in attempts):
+            raise AccountingContractError("recovery allocation exceeds target attempt debt")
+        levels: dict[tuple[str, int], list[AttemptRecoveryProjection]] = {}
+        for attempt in attempts:
+            levels.setdefault((attempt.key.cycle_id, attempt.key.level_id), []).append(attempt)
+        projections = tuple(
+            LevelRecoveryProjection(
+                cycle_id=key[0], level_id=key[1], attempt_projections=tuple(items),
+                total_remaining_debt=Money(sum((item.remaining_debt.value for item in items), ZERO)),
+            ) for key, items in sorted(levels.items())
+        )
+        if recovery_attempts and sum((level.total_remaining_debt.value for level in projections), ZERO) != confirmed_debt:
+            raise AccountingContractError("global recovery debt differs from attempt projections")
         state_values = {
             "as_of": as_of.isoformat(),
             "event_digests": [canonical_event_json(event) for event in ordered],
@@ -308,6 +400,7 @@ class CombinedLedgerReconstructor:
             debt_identity_residual=Money(
                 confirmed_debt - total_debt_increments + recovery_allocations
             ),
+            recovery_level_projections=projections,
             ledger_digest=digest,
         )
 

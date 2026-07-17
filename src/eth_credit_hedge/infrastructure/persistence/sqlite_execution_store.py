@@ -153,6 +153,13 @@ CREATE TABLE IF NOT EXISTS option_exit_snapshots (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS hedge_lot_allocations (
+    cycle_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    persisted_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
@@ -170,6 +177,9 @@ VALUES (6, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (7, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (8, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'));
 """
 
 
@@ -497,6 +507,27 @@ class SqliteExecutionStore:
 
     async def load_all_executions(self) -> tuple[ExecutionUpdate, ...]:
         return await asyncio.to_thread(self._load_all_executions)
+
+    async def persist_hedge_lot_allocation(
+        self,
+        cycle_id: str,
+        payload_json: str,
+        digest: str,
+        persisted_at: datetime,
+    ) -> None:
+        await asyncio.to_thread(
+            self._persist_hedge_lot_allocation,
+            cycle_id,
+            payload_json,
+            digest,
+            _utc(persisted_at, "hedge lot allocation persistence time"),
+        )
+
+    async def load_hedge_lot_allocation(
+        self,
+        cycle_id: str,
+    ) -> tuple[str, str] | None:
+        return await asyncio.to_thread(self._load_hedge_lot_allocation, cycle_id)
 
     async def persist_recovery_debt_snapshot(
         self,
@@ -1044,6 +1075,40 @@ class SqliteExecutionStore:
                 """
             ).fetchall()
         return tuple(_execution_from_row(row) for row in rows)
+
+    def _persist_hedge_lot_allocation(
+        self,
+        cycle_id: str,
+        payload_json: str,
+        digest: str,
+        persisted_at: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO hedge_lot_allocations(
+                    cycle_id, payload_json, digest, persisted_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(cycle_id) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    digest = excluded.digest,
+                    persisted_at = excluded.persisted_at
+                """,
+                (cycle_id, payload_json, digest, persisted_at.isoformat()),
+            )
+
+    def _load_hedge_lot_allocation(self, cycle_id: str) -> tuple[str, str] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json, digest FROM hedge_lot_allocations
+                WHERE cycle_id = ?
+                """,
+                (cycle_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["payload_json"]), str(row["digest"])
 
     def _persist_recovery_debt_snapshot(
         self,

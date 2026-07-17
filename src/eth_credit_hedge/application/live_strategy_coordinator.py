@@ -11,6 +11,11 @@ from typing import Any, Protocol
 
 from eth_credit_hedge.application.demo_runtime_journal import DemoRuntimeJournal
 from eth_credit_hedge.application.demo_runtime_state import LiveHedgeRole
+from eth_credit_hedge.application.hedge_lot_allocation import (
+    AllocationReconciliationError,
+    HedgeLotAllocationService,
+)
+from eth_credit_hedge.application.net_position_allocator import HedgeLot
 from eth_credit_hedge.application.one_level_lifecycle import (
     OneLevelLifecycleService,
 )
@@ -102,6 +107,7 @@ class LiveStrategyCoordinator:
         costs: StrategyCostConfig | None = None,
         math_engine: StrategyMathEngine | None = None,
         accounting_refresh: Callable[[], Awaitable[CombinedLedgerState]] | None = None,
+        allocation_service: HedgeLotAllocationService | None = None,
     ) -> None:
         if instrument.category != "linear" or instrument.symbol != "ETHUSDT":
             raise ValueError("live coordinator requires ETHUSDT linear")
@@ -143,6 +149,7 @@ class LiveStrategyCoordinator:
             ExpirationOptionValuation()
         )
         self._accounting_refresh = accounting_refresh
+        self._allocation = allocation_service
         self._previous_price: Decimal | None = None
         self._connection_generation: int | None = None
         self._pending_levels: set[int] = set()
@@ -159,6 +166,18 @@ class LiveStrategyCoordinator:
         state = self._journal.state
         if not state.reconciliation_complete or state.suspended_reason is not None:
             return LiveTriggerResult((), (), ("runtime is not reconciled",))
+        if self._allocation is not None and not any(
+            level.active_quantity > ZERO for level in state.levels
+        ):
+            positions = await self._account.get_positions("linear", "ETHUSDT")
+            try:
+                await self._allocation.reconcile_exchange_position(positions)
+            except AllocationReconciliationError as error:
+                await self._journal.append(
+                    JournalEventType.TRADING_SUSPENDED,
+                    payload={"reason": f"hedge lot reconciliation fault: {error}"},
+                )
+                return LiveTriggerResult((), (), (str(error),))
         if self._connection_generation is None:
             await self._reset_segment(event)
             return LiveTriggerResult((), ())
@@ -497,6 +516,12 @@ class LiveStrategyCoordinator:
         *,
         attempt: int,
     ) -> None:
+        await self._register_lot(
+            level=level,
+            attempt=attempt,
+            role=LiveHedgeRole.BASELINE,
+            entry_order_link_id=request.order_link_id,
+        )
         lifecycle = self._lifecycle_factory()
         async with self._entry_lock:
             protected = await lifecycle.open_and_protect(
@@ -515,6 +540,7 @@ class LiveStrategyCoordinator:
                 take_profit_price=level.tp_price,
                 reference_price=level.entry_price,
             )
+            await self._synchronize_allocation(protected.protection)
             await self._record_protection(level.level_id, protected.protection)
         await self._monitor_exit(level.level_id, request.order_link_id, lifecycle)
 
@@ -526,6 +552,12 @@ class LiveStrategyCoordinator:
         attempt: int,
         risk_state: Any,
     ) -> None:
+        await self._register_lot(
+            level=level,
+            attempt=attempt,
+            role=LiveHedgeRole.RECOVERY,
+            entry_order_link_id=entry_id,
+        )
         async def before_submission(plan: Any) -> None:
             sizing = plan.sizing
             if sizing is None:
@@ -578,6 +610,7 @@ class LiveStrategyCoordinator:
                 stop_distance=level.stop_distance,
                 take_profit_price=level.tp_price,
             )
+            await self._synchronize_allocation(protected.protection)
             await self._record_protection(level.level_id, protected.protection)
         await self._monitor_exit(level.level_id, entry_id, lifecycle)
 
@@ -615,6 +648,7 @@ class LiveStrategyCoordinator:
             else await self._accounting_refresh()
         )
         if snapshot.state is LiveExecutionState.CLOSED_STOP:
+            await self._synchronize_allocation(snapshot)
             actual_debt = max(-realized, ZERO)
             if state_before.active_role is LiveHedgeRole.RECOVERY:
                 await self._recovery.record_recovery_stop_debt(
@@ -653,6 +687,7 @@ class LiveStrategyCoordinator:
         if snapshot.state is not LiveExecutionState.CLOSED_TP:
             raise RuntimeError("lifecycle returned a non-terminal exit")
         remaining_debt = ZERO
+        await self._synchronize_allocation(snapshot)
         if state_before.active_role is LiveHedgeRole.RECOVERY:
             settled = await self._recovery.settle_take_profit(
                 level_id=level_id,
@@ -671,6 +706,56 @@ class LiveStrategyCoordinator:
             event_id=f"exit:{snapshot.tp_order_link_id}:{snapshot.version}",
         )
         self._assert_recovery_debt_projection(ledger_state)
+
+    async def _register_lot(
+        self,
+        *,
+        level: HedgeLevel,
+        attempt: int,
+        role: LiveHedgeRole,
+        entry_order_link_id: str,
+    ) -> None:
+        if self._allocation is None:
+            return
+        lot_id = f"{self._journal.state.cycle_id}:L{level.level_id:02d}:A{attempt:02d}"
+        await self._allocation.register(
+            HedgeLot(
+                lot_id=lot_id,
+                cycle_id=self._journal.state.cycle_id,
+                level_id=level.level_id,
+                attempt=attempt,
+                entry_order_link_id=entry_order_link_id,
+                role=role,
+                accounting_lot_id=lot_id,
+            )
+        )
+
+    async def _synchronize_allocation(self, protection: Any) -> None:
+        if self._allocation is None:
+            return
+        lot = next(
+            (
+                value
+                for value in self._allocation.allocator.lots
+                if value.entry_order_link_id == protection.entry_order_link_id
+            ),
+            None,
+        )
+        if lot is None:
+            raise AllocationReconciliationError("protection has no registered hedge lot")
+        if protection.tp_order_link_id is None:
+            raise AllocationReconciliationError("protection is missing take-profit ownership")
+        await self._allocation.bind_protection(
+            lot.lot_id,
+            take_profit_order_link_id=protection.tp_order_link_id,
+            stop_order_link_id=protection.stop_order_link_id,
+        )
+        await self._allocation.apply_confirmed_executions(
+            await self._store.load_all_executions()
+        )
+        await self._allocation.reconcile_exchange_position(
+            await self._account.get_positions("linear", "ETHUSDT")
+        )
 
     def _assert_recovery_debt_projection(
         self,

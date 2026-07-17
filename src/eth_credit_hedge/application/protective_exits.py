@@ -40,6 +40,7 @@ from eth_credit_hedge.domain.strategy_math import (
     StopGeometryEngine,
 )
 from eth_credit_hedge.ports.account import AccountPort
+from eth_credit_hedge.application.hedge_lot_allocation import HedgeLotAllocationService
 from eth_credit_hedge.ports.persistence import ExecutionPersistencePort
 from eth_credit_hedge.ports.trading import TradingPort
 
@@ -59,6 +60,7 @@ class ProtectiveExitService:
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
         visibility_attempts: int = 3,
         visibility_interval_seconds: float = 0.25,
+        allocation_service: HedgeLotAllocationService | None = None,
     ) -> None:
         if visibility_attempts <= 0:
             raise ValueError("visibility attempts must be positive")
@@ -71,6 +73,7 @@ class ProtectiveExitService:
         self._sleeper = sleeper
         self._visibility_attempts = visibility_attempts
         self._visibility_interval_seconds = visibility_interval_seconds
+        self._allocation_service = allocation_service
 
     async def install_stop(
         self,
@@ -288,6 +291,8 @@ class ProtectiveExitService:
             updated,
         )
         if inserted:
+            if self._allocation_service is not None:
+                await self._allocation_service.apply_confirmed_executions((execution,))
             return updated
         restored = await self._store.load_protection_snapshot(
             snapshot.entry_order_link_id

@@ -36,10 +36,13 @@ class LotExecution:
 @dataclass(frozen=True, slots=True)
 class HedgeLot:
     lot_id: str
+    cycle_id: str
     level_id: int
     attempt: int
     entry_order_link_id: str
     role: LiveHedgeRole
+    side: str = "Sell"
+    accounting_lot_id: str | None = None
     entry_executions: tuple[LotExecution, ...] = ()
     exit_executions: tuple[LotExecution, ...] = ()
     take_profit_order_link_id: str | None = None
@@ -50,6 +53,7 @@ class HedgeLot:
     def __post_init__(self) -> None:
         for value, name in (
             (self.lot_id, "lot ID"),
+            (self.cycle_id, "cycle ID"),
             (self.entry_order_link_id, "entry order-link ID"),
         ):
             if not value.strip():
@@ -57,6 +61,14 @@ class HedgeLot:
         if self.level_id <= 0 or self.attempt <= 0:
             raise ValueError("level ID and attempt must be positive")
         object.__setattr__(self, "role", LiveHedgeRole(self.role))
+        if self.side != "Sell":
+            raise ValueError("hedge lot side must be Sell in one-way short mode")
+        accounting_lot_id = (
+            self.lot_id if self.accounting_lot_id is None else self.accounting_lot_id
+        )
+        if not accounting_lot_id.strip():
+            raise ValueError("accounting lot ID cannot be empty")
+        object.__setattr__(self, "accounting_lot_id", accounting_lot_id)
         entries = tuple(self.entry_executions)
         exits = tuple(self.exit_executions)
         if len({value.execution_id for value in entries}) != len(entries):
@@ -150,6 +162,38 @@ class NetPositionAllocator:
         ):
             raise ValueError("entry order-link ID already belongs to a lot")
         self._lots[lot.lot_id] = lot
+
+    def bind_protection(
+        self,
+        lot_id: str,
+        *,
+        take_profit_order_link_id: str,
+        stop_order_link_id: str,
+    ) -> None:
+        lot = self._required_lot(lot_id)
+        if any(
+            other.lot_id != lot_id
+            and take_profit_order_link_id
+            in (other.take_profit_order_link_id, other.stop_order_link_id)
+            for other in self._lots.values()
+        ):
+            raise ValueError("take-profit order-link ID already belongs to another lot")
+        if any(
+            other.lot_id != lot_id
+            and stop_order_link_id
+            in (other.take_profit_order_link_id, other.stop_order_link_id)
+            for other in self._lots.values()
+        ):
+            raise ValueError("stop order-link ID already belongs to another lot")
+        if lot.take_profit_order_link_id not in (None, take_profit_order_link_id):
+            raise ValueError("take-profit order-link ID already belongs to the lot")
+        if lot.stop_order_link_id not in (None, stop_order_link_id):
+            raise ValueError("stop order-link ID already belongs to the lot")
+        self._lots[lot_id] = replace(
+            lot,
+            take_profit_order_link_id=take_profit_order_link_id,
+            stop_order_link_id=stop_order_link_id,
+        )
 
     def record_entry_execution(
         self,

@@ -358,10 +358,12 @@ def test_real_command_composition_is_deterministic_and_flat(tmp_path: Path) -> N
     second = asyncio.run(run_once(tmp_path / "second"))
     assert first["event_log"] == second["event_log"]
     assert first["event_digest"] == second["event_digest"]
+    assert first["allocation_digest"] == second["allocation_digest"]
     assert first["final_level_states"] == ["PAID"]
     assert Decimal(str(first["final_recovery_debt"])) == Decimal("0")
     assert first["final_linear_position_count"] == 0
     assert first["final_linear_order_count"] == 0
+    assert Decimal(str(first["allocator_open_quantity"])) == Decimal("0")
 
 
 def test_real_command_composition_runs_multiple_baseline_levels(

@@ -11,6 +11,7 @@ from typing import Protocol
 
 from eth_credit_hedge.application.emergency_flatten import EmergencyFlattenService
 from eth_credit_hedge.application.execution_hash import execution_payload_hash
+from eth_credit_hedge.application.hedge_lot_allocation import HedgeLotAllocationService
 from eth_credit_hedge.application.kill_switch import StrategyCloseOperationsPort
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
 from eth_credit_hedge.domain.execution import (
@@ -92,6 +93,7 @@ class DemoStrategyCloseOperations(StrategyCloseOperationsPort):
         maximum_attempts: int = 5,
         execution_visibility_attempts: int = 60,
         poll_interval_seconds: float = 0.25,
+        allocation_service: HedgeLotAllocationService | None = None,
     ) -> None:
         if maximum_attempts <= 0:
             raise ValueError("maximum close attempts must be positive")
@@ -117,6 +119,7 @@ class DemoStrategyCloseOperations(StrategyCloseOperationsPort):
         self._maximum_attempts = maximum_attempts
         self._execution_visibility_attempts = execution_visibility_attempts
         self._poll_interval_seconds = poll_interval_seconds
+        self._allocation_service = allocation_service
 
     async def close_hedges(self) -> None:
         await self._cancel_pending_linear_entries()
@@ -163,6 +166,10 @@ class DemoStrategyCloseOperations(StrategyCloseOperationsPort):
                     )
                     if inserted:
                         await self._allocate_emergency_execution(execution)
+                        if self._allocation_service is not None:
+                            await self._allocation_service.apply_confirmed_executions(
+                                (execution,)
+                            )
                 if await flatten.confirm_flattened():
                     if await self._durable_open_hedge_quantity() == ZERO:
                         await self._trading.cancel_all("linear", "ETHUSDT")
@@ -519,6 +526,10 @@ class DemoStrategyCloseOperations(StrategyCloseOperationsPort):
                 )
                 if inserted:
                     await self._allocate_emergency_execution(execution)
+                    if self._allocation_service is not None:
+                        await self._allocation_service.apply_confirmed_executions(
+                            (execution,)
+                        )
 
     async def _durable_open_hedge_quantity(self) -> Decimal:
         protections = await self._store.load_all_protection_snapshots()

@@ -3,9 +3,9 @@
 ## Status
 
 This is the Plan 3.1 ownership contract for the offline-only Milestone 3
-runtime. It defines the target graph and construction boundary. It does not
-migrate lifecycle behavior, accounting formulas, allocator state, or startup
-reconciliation behavior; those changes belong to Plans 3.2 through 3.7.
+runtime. It defines the target graph and construction boundary. Plan 3.2
+connects allocator state; lifecycle accounting and startup reconciliation
+remain migrations for Plans 3.3 through 3.7.
 
 The target is one `AuthoritativeStrategyRuntime` assembled through dependency
 injection. Simulated and future demo execution must supply the same graph; only
@@ -25,7 +25,7 @@ network access or exchange mutations.
 | Crossings | `AuthoritativeStrategyRuntime.coordinator` -> `LiveStrategyCoordinator` | Existing coordinator; it is the target crossing owner. |
 | Hedge entry and exits | `AuthoritativeStrategyRuntime.coordinator` -> `LiveStrategyCoordinator` | Existing coordinator/service split; allocator integration is Plan 3.2. |
 | Protection | `AuthoritativeStrategyRuntime.coordinator` -> `ProtectiveExitService` | Existing service; protection-state migration is Plan 3.4. |
-| Internal lots | `AuthoritativeStrategyRuntime.allocator` -> `NetPositionAllocator` | Accepted unit authority, not yet production-connected; Plan 3.2. |
+| Internal lots | `HedgeLotAllocationService` -> `NetPositionAllocator` | Production-connected through the demo and simulated composition roots; durable allocation state is replayed before use. |
 | Accounting | `AuthoritativeStrategyRuntime.accounting` -> `AccountingRuntime` | Accepted Milestone 2 authority. |
 | Recovery debt | `AuthoritativeStrategyRuntime.accounting` -> combined-ledger projection | Target authority; journal-side debt remains legacy until Plan 3.4. |
 | Risk | `AuthoritativeStrategyRuntime.risk` -> risk service pair | Existing owner pair; complete configuration wiring is Plan 3.5. |
@@ -51,10 +51,11 @@ dependencies and does not secretly create another authority.
 
 The approved future composition root will construct the runtime façade once and
 inject its members into consumers. The current `demo_strategy_runtime` has not
-yet switched to the façade because doing so before Plans 3.2 and 3.3 would create
-a façade whose allocator and startup reconciliation are unused. The checked-in
-manifest records this as `declared; production wiring is deferred to Plans
-3.2-3.7`.
+yet switched to the façade because startup reconciliation remains unused. The
+allocator is now constructed once by each current environment composition root,
+then injected into lifecycle, private execution, recovery, reconciliation, and
+shutdown. The checked-in manifest records the remaining façade migration as
+deferred to Plans 3.3-3.7.
 
 ## Environment ports
 
@@ -85,7 +86,7 @@ adapters are inventory only and must not be contacted during Milestone 3.
 | `ledger_simulated_lifecycle` | test fixture | accounting runtime tests and project audit; deterministic JSON/SQLite artifacts | Retained as M2 replay evidence; it does not represent the complete strategy runtime. |
 | `one_level_coordinator` | compatibility adapter | one-level tests and legacy D4 path | Not a multi-level authoritative coordinator. |
 | `multi_level_execution` | compatibility adapter | legacy D5 path and tests | Not the shared runtime coordinator. |
-| `live_strategy_coordinator` | authoritative target | `demo_strategy_runtime` and simulated command; `DemoRuntimeJournal` plus execution store | Owns crossing orchestration; later plans connect allocator, ledger-derived debt, and startup reconciliation. |
+| `live_strategy_coordinator` | authoritative target | `demo_strategy_runtime` and simulated command; `DemoRuntimeJournal`, execution store, and allocation service | Owns crossing orchestration and receives the allocator; ledger-derived debt and startup reconciliation remain deferred. |
 | `mainnet_shadow_runner` | legacy, out of Milestone 3 scope | shadow CLI; JSONL capture | Not an offline strategy runtime and must not be invoked in this milestone. |
 
 ## Current ownership divergence
@@ -99,7 +100,9 @@ The following remain deliberately visible until their named migration plans:
   coordinator can read these legacy projections (Plans 3.4 and 3.5).
 - `demo_runner` and `protected_execution.py` contain legacy realized-P&L/debt
   paths (Plan 3.4).
-- `NetPositionAllocator` is constructed only in its isolated tests (Plan 3.2).
+- `HedgeLotAllocationService` persists allocator state in the execution store
+  and is injected by both current environment composition roots. The remaining
+  façade consolidation is deferred to Plans 3.3-3.7.
 - `ledger_simulated_lifecycle` proves the raw-fill ledger separately from the
   simulated strategy command (Plan 3.7).
 - `TradingPort` exposes mutation and query methods together; capability sealing

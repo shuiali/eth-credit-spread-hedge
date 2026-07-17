@@ -1,11 +1,11 @@
 {
-  "version": "M3.1",
+  "version": "M3.2",
   "scope": "offline-only composition contract",
   "runtime_facade": {
     "module": "eth_credit_hedge.application.authoritative_runtime",
     "class": "AuthoritativeStrategyRuntime",
     "factory": "assemble_authoritative_runtime",
-    "wiring_status": "declared; production wiring is deferred to Plans 3.2-3.7"
+    "wiring_status": "allocator wiring is complete; façade consolidation is deferred to Plans 3.3-3.7"
   },
   "authorities": {
     "configuration": "AuthoritativeStrategyRuntime.configuration -> RuntimeConfig/EnvironmentProfile",
@@ -17,7 +17,7 @@
     "crossings": "AuthoritativeStrategyRuntime.coordinator -> LiveStrategyCoordinator",
     "hedge_entry_and_exits": "AuthoritativeStrategyRuntime.coordinator -> LiveStrategyCoordinator",
     "protection": "AuthoritativeStrategyRuntime.coordinator -> ProtectiveExitService",
-    "internal_lots": "AuthoritativeStrategyRuntime.allocator -> NetPositionAllocator",
+    "internal_lots": "HedgeLotAllocationService -> NetPositionAllocator",
     "accounting": "AuthoritativeStrategyRuntime.accounting -> AccountingRuntime",
     "recovery_debt": "AuthoritativeStrategyRuntime.accounting -> combined-ledger projection",
     "risk": "AuthoritativeStrategyRuntime.risk -> RuntimeRiskStateBuilder/RiskEngine",
@@ -51,7 +51,9 @@
       "src/eth_credit_hedge/application/demo_strategy_runtime.py",
       "src/eth_credit_hedge/interfaces/ledger_simulated_lifecycle.py"
     ],
-    "NetPositionAllocator": [],
+    "NetPositionAllocator": [
+      "src/eth_credit_hedge/application/hedge_lot_allocation.py"
+    ],
     "StartupReconciliationService": []
   },
   "observable_runtime_facts": [
@@ -59,6 +61,8 @@
     "SQLite execution, journal, and accounting stores",
     "Accounting ledger digest and reconciliation records",
     "MutableOperationalState health snapshot",
-    "SecretSafeJsonLogger events"
+    "SecretSafeJsonLogger events",
+    "SQLite hedge_lot_allocations payload and digest",
+    "Simulated runtime allocation_digest and allocator_open_quantity"
   ]
 }

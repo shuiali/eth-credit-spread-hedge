@@ -121,6 +121,27 @@ def test_option_exit_snapshot_is_restartable_and_versioned(tmp_path: Path) -> No
         )
         await store.transition_option_exit_snapshot(1, closing)
         assert await store.load_option_exit_snapshot("cycle-1") == closing
-        assert await store.schema_version() == 7
+        assert await store.schema_version() == 8
+
+    asyncio.run(exercise())
+
+
+def test_hedge_lot_allocation_payload_is_restartable(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        path = tmp_path / "execution.sqlite3"
+        store = SqliteExecutionStore(path)
+        await store.initialize()
+        await store.persist_hedge_lot_allocation(
+            "cycle-1",
+            '[{"lot_id":"cycle-1:L01:A01"}]',
+            "a" * 64,
+            NOW,
+        )
+        restarted = SqliteExecutionStore(path)
+        await restarted.initialize()
+        assert await restarted.load_hedge_lot_allocation("cycle-1") == (
+            '[{"lot_id":"cycle-1:L01:A01"}]',
+            "a" * 64,
+        )
 
     asyncio.run(exercise())

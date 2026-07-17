@@ -16,6 +16,11 @@ from typing import Any, Protocol, TYPE_CHECKING
 
 from eth_credit_hedge.application.demo_runtime_journal import DemoRuntimeJournal
 from eth_credit_hedge.application.accounting_runtime import AccountingRuntime
+from eth_credit_hedge.application.hedge_lot_allocation import (
+    AllocationReconciliationError,
+    HedgeLotAllocationService,
+)
+from eth_credit_hedge.application.net_position_allocator import NetPositionAllocator
 from eth_credit_hedge.application.private_execution_accounting import (
     PrivateExecutionClassifier,
 )
@@ -346,6 +351,11 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
         option_quotes=await market_data.get_option_chain("ETH"),
         clock=now,
     )
+    allocation = await HedgeLotAllocationService.restore(
+        cycle_id=option.cycle_id,
+        store=execution_store,
+        clock=now,
+    )
     if not await _reconcile_accounting_runtime(
         accounting=accounting,
         private=private,
@@ -391,6 +401,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             attempt,
         ),
         clock=now,
+        allocation_service=allocation,
     )
     operations = MutableOperationalState(
         maximum_market_data_age_ms=deployment.maximum_market_data_age_ms,
@@ -441,6 +452,7 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
             math_engine=math_engine,
             accounting=accounting,
             accounting_strategy_instance=STRATEGY_INSTANCE,
+            allocation_service=allocation,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -496,6 +508,10 @@ async def run_demo_strategy(command: DemoStrategyCommand) -> dict[str, object]:
         cycle_number=cycle_number,
         strategy_instance=STRATEGY_INSTANCE,
         clock=now,
+        allocation_service=allocation,
+    )
+    await allocation.reconcile_exchange_position(
+        await private.get_positions("linear", "ETHUSDT")
     )
     if not await _reconcile_accounting_runtime(
         accounting=accounting,
@@ -633,6 +649,11 @@ async def run_simulated_strategy_command(
         option_quotes=await exchange.get_option_chain("ETH"),
         clock=lambda: exchange.current_time_utc,
     )
+    allocation = await HedgeLotAllocationService.restore(
+        cycle_id=option.cycle_id,
+        store=execution_store,
+        clock=lambda: exchange.current_time_utc,
+    )
     operations = MutableOperationalState(
         maximum_market_data_age_ms=deployment.maximum_market_data_age_ms,
         clock=lambda: exchange.current_time_utc,
@@ -710,6 +731,7 @@ async def run_simulated_strategy_command(
             accounting=accounting,
             accounting_strategy_instance="SIM",
             accounting_reconciliation_enabled=False,
+            allocation_service=allocation,
         )
     except BaseException as exc:
         runtime_error = exc
@@ -751,6 +773,7 @@ async def run_simulated_strategy_command(
             clock=lambda: exchange.current_time_utc,
             sleeper=yield_only,
             poll_interval_seconds=0,
+            allocation_service=allocation,
         )
         try:
             close_verified = (
@@ -789,6 +812,10 @@ async def run_simulated_strategy_command(
         cycle_number=1,
         strategy_instance="SIM",
         clock=lambda: exchange.current_time_utc,
+        allocation_service=allocation,
+    )
+    await allocation.reconcile_exchange_position(
+        await exchange.get_positions("linear", "ETHUSDT")
     )
     if not preserve_state_on_timeout:
         _assert_shutdown_accounting(accounting.state, options_must_be_flat=True)
@@ -819,6 +846,8 @@ async def run_simulated_strategy_command(
         "final_linear_order_count": len(orders),
         "close_verified": close_verified,
         "accounting": accounting.state.to_dict(),
+        "allocator_open_quantity": str(allocation.allocator.total_open_quantity),
+        "allocation_digest": allocation.digest,
     }
     if runtime_error is not None:
         raise RuntimeError("simulated runtime failed and was closed") from runtime_error
@@ -1066,6 +1095,7 @@ async def _run_supervised_session(
     accounting: AccountingRuntime,
     accounting_strategy_instance: str,
     accounting_reconciliation_enabled: bool = True,
+    allocation_service: HedgeLotAllocationService | None = None,
 ) -> None:
     tasks: list[asyncio.Task[None]] = []
 
@@ -1101,7 +1131,12 @@ async def _run_supervised_session(
     )
 
     def lifecycle() -> OneLevelLifecycleService:
-        entry = OneLevelEntryService(trading=private, store=store, clock=clock)
+        entry = OneLevelEntryService(
+            trading=private,
+            store=store,
+            clock=clock,
+            allocation_service=allocation_service,
+        )
         exits = ProtectiveExitService(
             trading=private,
             account=private,
@@ -1110,6 +1145,7 @@ async def _run_supervised_session(
             sleeper=sleeper,
             visibility_attempts=10,
             visibility_interval_seconds=0.25,
+            allocation_service=allocation_service,
         )
         return OneLevelLifecycleService(
             trading=private,
@@ -1132,6 +1168,7 @@ async def _run_supervised_session(
             cycle_number=cycle_number,
             strategy_instance=accounting_strategy_instance,
             clock=clock,
+            allocation_service=allocation_service,
         )
         operations.update_accounting(accounting.state)
         return accounting.state
@@ -1169,6 +1206,7 @@ async def _run_supervised_session(
             sleeper=sleeper,
             exit_poll_interval_seconds=exit_poll_interval_seconds,
             accounting_refresh=refresh_accounting,
+            allocation_service=allocation_service,
         )
         await coordinator.restore_active_levels()
         spawn(
@@ -1182,6 +1220,7 @@ async def _run_supervised_session(
                 accounting,
                 cycle_number,
                 accounting_strategy_instance,
+                allocation_service,
             )
         )
         await _wait_for_private_reconciliation(private_stream)
@@ -1206,6 +1245,7 @@ async def _run_supervised_session(
                 cycle_id=option.cycle_id,
                 cycle_number=cycle_number,
                 strategy_instance=accounting_strategy_instance,
+                allocation_service=allocation_service,
                 accounting_reconciliation_enabled=(
                     accounting_reconciliation_enabled
                 ),
@@ -1313,13 +1353,24 @@ async def _private_loop(
     accounting: AccountingRuntime,
     cycle_number: int,
     strategy_instance: str,
+    allocation_service: HedgeLotAllocationService | None = None,
 ) -> None:
     async for event in stream.stream_events():
         if isinstance(event, PrivateConnectionEvent):
             authenticated = event.state is PrivateConnectionState.AUTHENTICATED
             operations.mark_private(authenticated)
             if authenticated:
-                matched = await _reconcile_runtime(journal, store, private, clock)
+                matched = (
+                    await _reconcile_runtime(journal, store, private, clock)
+                    if allocation_service is None
+                    else await _reconcile_runtime(
+                        journal,
+                        store,
+                        private,
+                        clock,
+                        allocation_service=allocation_service,
+                    )
+                )
                 operations.update_runtime(journal.state)
                 operations.mark_reconciliation(matched, "MATCHED" if matched else "MISMATCH")
                 if not matched:
@@ -1337,8 +1388,15 @@ async def _private_loop(
                 cycle_id=journal.state.cycle_id,
                 cycle_number=cycle_number,
                 strategy_instance=strategy_instance,
+                allocator=(
+                    None
+                    if allocation_service is None
+                    else allocation_service.allocator
+                ),
             )
             state = await accounting.apply_private_update_batch(event, classifier)
+            if allocation_service is not None:
+                await allocation_service.apply_confirmed_executions(event.executions)
             operations.update_accounting(state)
             operations.update_runtime(journal.state)
 
@@ -1356,6 +1414,7 @@ async def _reconciliation_loop(
     cycle_id: str | None = None,
     cycle_number: int | None = None,
     strategy_instance: str | None = None,
+    allocation_service: HedgeLotAllocationService | None = None,
     accounting_reconciliation_enabled: bool = False,
 ) -> None:
     if maximum_failures <= 0:
@@ -1372,6 +1431,7 @@ async def _reconciliation_loop(
                 cycle_number=cycle_number,
                 strategy_instance=strategy_instance,
                 clock=clock,
+                allocation_service=allocation_service,
             )
             operations.update_accounting(accounting.state)
         accounting_matched = True
@@ -1385,10 +1445,18 @@ async def _reconciliation_loop(
                 strategy_instance=strategy_instance,
                 clock=clock,
             )
-        matched = (
+        runtime_matched = (
             await _reconcile_runtime(journal, store, private, clock)
-            and accounting_matched
+            if allocation_service is None
+            else await _reconcile_runtime(
+                journal,
+                store,
+                private,
+                clock,
+                allocation_service=allocation_service,
+            )
         )
+        matched = runtime_matched and accounting_matched
         operations.update_runtime(journal.state)
         operations.mark_reconciliation(matched, "MATCHED" if matched else "MISMATCH")
         if (
@@ -1557,6 +1625,7 @@ async def _execution_classifier(
     cycle_id: str,
     cycle_number: int,
     strategy_instance: str,
+    allocator: NetPositionAllocator | None = None,
 ) -> PrivateExecutionClassifier:
     reference_prices = {
         request.order_link_id: Price(request.trigger_price)
@@ -1568,6 +1637,7 @@ async def _execution_classifier(
         cycle_number=cycle_number,
         strategy_instance=strategy_instance,
         reference_prices=reference_prices,
+        allocator=allocator,
     )
 
 
@@ -1579,6 +1649,7 @@ async def _recover_confirmed_executions(
     cycle_number: int,
     strategy_instance: str,
     clock: Callable[[], datetime],
+    allocation_service: HedgeLotAllocationService | None = None,
 ) -> None:
     executions: list[ExecutionUpdate] = []
     for execution in await execution_store.load_all_executions():
@@ -1619,8 +1690,13 @@ async def _recover_confirmed_executions(
         cycle_id=cycle_id,
         cycle_number=cycle_number,
         strategy_instance=strategy_instance,
+        allocator=(
+            None if allocation_service is None else allocation_service.allocator
+        ),
     )
     await accounting.apply_rest_update_batch(batch, classifier)
+    if allocation_service is not None:
+        await allocation_service.apply_confirmed_executions(executions)
 
 
 async def _record_option_quotes(
@@ -1668,6 +1744,8 @@ async def _reconcile_runtime(
     store: SqliteExecutionStore,
     private: BybitPrivateRestClient,
     clock: Callable[[], datetime],
+    *,
+    allocation_service: HedgeLotAllocationService | None = None,
 ) -> bool:
     exchange = await BybitPrivateStateReader(
         trading=private,
@@ -1682,6 +1760,16 @@ async def _reconcile_runtime(
         known_order_link_ids=known,
         expected_positions=await _expected_durable_positions(store),
     )
+    if result.trading_allowed and allocation_service is not None:
+        try:
+            await allocation_service.apply_confirmed_executions(exchange.executions)
+            await allocation_service.reconcile_exchange_position(exchange.positions)
+        except (AllocationReconciliationError, ValueError) as error:
+            await journal.append(
+                JournalEventType.TRADING_SUSPENDED,
+                payload={"reason": f"hedge lot reconciliation fault: {error}"},
+            )
+            return False
     if result.trading_allowed:
         await journal.append(
             JournalEventType.RECONCILIATION_COMPLETED,

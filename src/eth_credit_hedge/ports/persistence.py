@@ -199,3 +199,16 @@ class ExecutionPersistencePort(Protocol):
         previous_version: int,
         snapshot: RecoveryDebtSnapshot,
     ) -> None: ...
+
+    async def persist_hedge_lot_allocation(
+        self,
+        cycle_id: str,
+        payload_json: str,
+        digest: str,
+        persisted_at: datetime,
+    ) -> None: ...
+
+    async def load_hedge_lot_allocation(
+        self,
+        cycle_id: str,
+    ) -> tuple[str, str] | None: ...

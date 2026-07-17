@@ -25,6 +25,7 @@ from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerStat
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
 from eth_credit_hedge.domain.execution import ExecutionUpdate, ExecutionUpdateBatch
 from eth_credit_hedge.domain.strategy_math.units import Money, Price, Quantity
+from eth_credit_hedge.application.net_position_allocator import NetPositionAllocator
 
 
 AccountingPrivateExecution = OptionExecutionRecorded | HedgeExecutionRecorded
@@ -61,6 +62,7 @@ class PrivateExecutionClassifier:
         cycle_number: int,
         strategy_instance: str,
         reference_prices: Mapping[str, Price] | None = None,
+        allocator: NetPositionAllocator | None = None,
     ) -> None:
         if not cycle_id.strip():
             raise ValueError("accounting cycle ID cannot be empty")
@@ -68,6 +70,7 @@ class PrivateExecutionClassifier:
         self.cycle_number = cycle_number
         self.strategy_instance = strategy_instance
         self._reference_prices = dict(reference_prices or {})
+        self._allocator = allocator
 
     def classify_batch(
         self,
@@ -174,14 +177,18 @@ class PrivateExecutionClassifier:
                     update, "hedge entry must be a Sell execution"
                 )
             return self._hedge_event(
-                metadata, execution, client_id, exit_reason=None, lot_id=None
+                metadata,
+                execution,
+                client_id,
+                exit_reason=None,
+                lot_id=self._allocated_entry_lot_id(client_id, update),
             )
         if role in (ClientOrderRole.HEDGE_TP, ClientOrderRole.HEDGE_STOP):
             if side is not Side.BUY:
                 raise PrivateExecutionClassificationError(
                     update, "hedge exit must be a Buy execution"
                 )
-            lot_id = _lot_id(self.cycle_id, client_id.level, client_id.attempt)
+            lot_id = self._allocated_exit_lot_id(client_id, update)
             lot = open_lots.get(lot_id)
             if lot is None or update.quantity > lot.open_quantity:
                 raise PrivateExecutionClassificationError(
@@ -279,6 +286,56 @@ class PrivateExecutionClassifier:
             reference_type=ReferenceType.TRIGGER if reference is not None else None,
             reference_price=reference,
         )
+
+    def _allocated_entry_lot_id(
+        self,
+        client_id: ClientOrderId,
+        update: ExecutionUpdate,
+    ) -> str | None:
+        if self._allocator is None:
+            return None
+        matches = tuple(
+            lot
+            for lot in self._allocator.lots
+            if lot.entry_order_link_id == update.order_link_id
+        )
+        if len(matches) != 1:
+            raise PrivateExecutionClassificationError(
+                update, "hedge entry does not match exactly one allocated lot"
+            )
+        lot = matches[0]
+        if lot.level_id != client_id.level or lot.attempt != client_id.attempt:
+            raise PrivateExecutionClassificationError(
+                update, "allocated hedge entry identity conflicts with client order ID"
+            )
+        return lot.accounting_lot_id
+
+    def _allocated_exit_lot_id(
+        self,
+        client_id: ClientOrderId,
+        update: ExecutionUpdate,
+    ) -> str:
+        fallback = _lot_id(self.cycle_id, client_id.level, client_id.attempt)
+        if self._allocator is None:
+            return fallback
+        matches = tuple(
+            lot
+            for lot in self._allocator.lots
+            if update.order_link_id
+            in (lot.take_profit_order_link_id, lot.stop_order_link_id)
+        )
+        if not matches:
+            return fallback
+        if len(matches) != 1:
+            raise PrivateExecutionClassificationError(
+                update, "hedge exit matches multiple allocated lots"
+            )
+        lot = matches[0]
+        if lot.level_id != client_id.level or lot.attempt != client_id.attempt:
+            raise PrivateExecutionClassificationError(
+                update, "allocated hedge exit identity conflicts with client order ID"
+            )
+        return lot.accounting_lot_id or fallback
 
 
 def _lot_id(cycle_id: str, level_id: int, attempt: int) -> str:

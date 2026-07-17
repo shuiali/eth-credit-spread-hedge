@@ -18,6 +18,7 @@ from eth_credit_hedge.application.net_position_allocator import (
 def lot(name: str, level_id: int) -> HedgeLot:
     return HedgeLot(
         lot_id=name,
+        cycle_id="cycle-1",
         level_id=level_id,
         attempt=1,
         entry_order_link_id=f"ENTRY-{level_id}",

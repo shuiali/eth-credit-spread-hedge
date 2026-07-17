@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from eth_credit_hedge.application.hedge_lot_allocation import HedgeLotAllocationService
 from eth_credit_hedge.domain.execution import (
     ExchangePosition,
     ExecutionUpdate,
@@ -34,10 +35,12 @@ class OneLevelEntryService:
         trading: TradingPort,
         store: ExecutionPersistencePort,
         clock: Callable[[], datetime],
+        allocation_service: HedgeLotAllocationService | None = None,
     ) -> None:
         self._trading = trading
         self._store = store
         self._clock = clock
+        self._allocation_service = allocation_service
         self._active_order_link_id: str | None = None
 
     async def submit_entry(
@@ -150,6 +153,8 @@ class OneLevelEntryService:
             updated,
         )
         if inserted:
+            if self._allocation_service is not None:
+                await self._allocation_service.apply_confirmed_executions((execution,))
             return updated
         return await self._required_snapshot(execution.order_link_id)
 

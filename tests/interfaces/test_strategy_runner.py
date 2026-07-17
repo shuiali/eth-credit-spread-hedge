@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 from eth_credit_hedge.config import load_operator_simulation_config
-from eth_credit_hedge.interfaces.project_audit import run_math_audit, run_milestone2_audit
+from eth_credit_hedge.interfaces.project_audit import (
+    run_math_audit,
+    run_milestone2_audit,
+    run_post_milestone2_audit,
+)
 from eth_credit_hedge.interfaces.strategy_runner import SCENARIOS, main, run_simulation
 
 
@@ -142,3 +146,25 @@ def test_milestone2_project_audit_writes_authoritative_ledger_evidence(tmp_path:
     assert report["defects"]["D-008"].startswith("CLOSED")
     assert (tmp_path / "milestone2_ledger_audit.json").exists()
     assert (tmp_path / "integrated_runtime" / "dashboard.json").exists()
+
+
+def test_post_milestone2_audit_reassesses_all_original_requirements(
+    tmp_path: Path,
+) -> None:
+    report = run_post_milestone2_audit(
+        repo=CONFIG.parents[1],
+        plans=CONFIG.parents[1] / "Plans",
+        config_path=CONFIG,
+        output=tmp_path,
+    )
+
+    assert report["offline_only"] is True
+    assert report["original_requirement_count"] == 267
+    assert report["pass_count"] == 13
+    findings = report["post_milestone2_findings"]
+    assert isinstance(findings, dict)
+    assert findings["net_position_allocator"]["status"] == "NOT AUTHORITATIVE"
+    assert findings["startup_reconciliation"]["status"] == "NOT AUTHORITATIVE"
+    assert findings["legacy_accounting"]["status"] == "ACTIVE"
+    assert (tmp_path / "02_REQUIREMENT_TRACEABILITY_MATRIX.csv").exists()
+    assert (tmp_path / "00_AUDIT_SUMMARY.md").exists()

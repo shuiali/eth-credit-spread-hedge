@@ -8,7 +8,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TypeAlias
+from typing import Any, TypeAlias, cast
 
 from eth_credit_hedge.domain.accounting.errors import (
     AccountingContractError,
@@ -264,11 +264,21 @@ class AccountingSnapshotCreated(EventMetadata):
 class RecoveryDebtChanged(EventMetadata):
     increment: Money
     reason: str
+    actual_recovery_allocation: Money = Money(Decimal("0"))
 
     def __post_init__(self) -> None:
         EventMetadata.__post_init__(self)
         if not isinstance(self.increment, Money) or self.increment.value < 0:
             raise AccountingContractError("debt increment must be nonnegative")
+        if (
+            not isinstance(self.actual_recovery_allocation, Money)
+            or self.actual_recovery_allocation.value < 0
+        ):
+            raise AccountingContractError("actual recovery allocation must be nonnegative")
+        if self.increment.value and self.actual_recovery_allocation.value:
+            raise AccountingContractError(
+                "debt change cannot increment and settle debt simultaneously"
+            )
         required_text(self.reason, "debt reason")
 
 
@@ -312,6 +322,222 @@ def canonical_event_json(event: AccountingEvent) -> str:
 
 def event_digest(event: AccountingEvent) -> str:
     return hashlib.sha256(canonical_event_json(event).encode("utf-8")).hexdigest()
+
+
+def event_from_dict(payload: dict[str, object]) -> AccountingEvent:
+    """Reconstruct one canonical JSONL accounting event without float coercion."""
+    event_type = _text(payload, "event_type")
+    metadata = cast(Any, _metadata(payload))
+    if event_type == "OptionExecutionRecorded":
+        return OptionExecutionRecorded(
+            **metadata,
+            execution=_execution(_object(payload, "execution")),
+            leg=OptionLeg(_text(payload, "leg")),
+        )
+    if event_type == "HedgeExecutionRecorded":
+        return HedgeExecutionRecorded(
+            **metadata,
+            execution=_execution(_object(payload, "execution")),
+            lot_id=_text(payload, "lot_id"),
+            attempt=_integer(payload, "attempt"),
+            role=HedgeRole(_text(payload, "role")),
+            exit_reason=_exit_reason_or_none(payload),
+            reference_type=_reference_type_or_none(payload),
+            reference_price=_price_or_none(payload, "reference_price"),
+        )
+    if event_type == "FeeRecorded":
+        return FeeRecorded(
+            **metadata,
+            fee_id=_text(payload, "fee_id"),
+            owner=FeeOwner(_text(payload, "owner")),
+            amount=Money(_decimal(payload, "amount")),
+            currency=_text(payload, "currency"),
+        )
+    if event_type == "FundingRecorded":
+        allocations = tuple(
+            FundingAllocation(
+                lot_id=_text(allocation, "lot_id"),
+                amount=Money(_decimal(allocation, "amount")),
+            )
+            for allocation in _objects(payload, "allocations")
+        )
+        return FundingRecorded(
+            **metadata,
+            funding_id=_text(payload, "funding_id"),
+            position_quantity=Quantity(_decimal(payload, "position_quantity")),
+            rate=_decimal(payload, "rate"),
+            amount=Money(_decimal(payload, "amount")),
+            allocations=allocations,
+        )
+    if event_type == "ReferencePriceRecorded":
+        return ReferencePriceRecorded(
+            **metadata,
+            reference_type=ReferenceType(_text(payload, "reference_type")),
+            price=Price(_decimal(payload, "price")),
+        )
+    if event_type == "OptionQuoteRecorded":
+        return OptionQuoteRecorded(
+            **metadata,
+            bid=Price(_decimal(payload, "bid")),
+            ask=Price(_decimal(payload, "ask")),
+            mark=Price(_decimal(payload, "mark")),
+            valid_until=_datetime(payload, "valid_until"),
+        )
+    if event_type == "PositionReconciled":
+        matched = payload.get("matched")
+        if type(matched) is not bool:
+            raise AccountingContractError("reconciliation match flag is invalid")
+        return PositionReconciled(
+            **metadata,
+            internal_quantity=Quantity(_decimal(payload, "internal_quantity")),
+            external_quantity=Quantity(_decimal(payload, "external_quantity")),
+            matched=matched,
+            detail=_text(payload, "detail"),
+        )
+    if event_type == "AccountingSnapshotCreated":
+        return AccountingSnapshotCreated(
+            **metadata,
+            sequence=_integer(payload, "sequence"),
+            ledger_digest=_text(payload, "ledger_digest"),
+        )
+    if event_type == "RecoveryDebtChanged":
+        return RecoveryDebtChanged(
+            **metadata,
+            increment=Money(_decimal(payload, "increment")),
+            actual_recovery_allocation=Money(
+                _decimal_or_default(payload, "actual_recovery_allocation", Decimal("0"))
+            ),
+            reason=_text(payload, "reason"),
+        )
+    raise AccountingContractError(f"unsupported accounting event type: {event_type}")
+
+
+def _metadata(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "event_id": _text(payload, "event_id"),
+        "event_version": _integer(payload, "event_version"),
+        "cycle_id": _text(payload, "cycle_id"),
+        "timestamp": _datetime(payload, "timestamp"),
+        "source": EventSource(_text(payload, "source")),
+        "correlation_id": _text(payload, "correlation_id"),
+        "level_id": _optional_integer(payload, "level_id"),
+        "execution_id": _optional_text(payload, "execution_id"),
+        "order_id": _optional_text(payload, "order_id"),
+        "order_link_id": _optional_text(payload, "order_link_id"),
+        "symbol": _optional_text(payload, "symbol"),
+    }
+
+
+def _execution(payload: dict[str, object]) -> ConfirmedExecution:
+    return ConfirmedExecution(
+        execution_id=_text(payload, "execution_id"),
+        symbol=_text(payload, "symbol"),
+        instrument_kind=InstrumentKind(_text(payload, "instrument_kind")),
+        side=Side(_text(payload, "side")),
+        price=Price(_decimal(payload, "price")),
+        quantity=Quantity(_decimal(payload, "quantity")),
+        fee=Money(_decimal(payload, "fee")),
+        fee_currency=_text(payload, "fee_currency"),
+        timestamp=_datetime(payload, "timestamp"),
+        order_id=_text(payload, "order_id"),
+        order_link_id=_optional_text(payload, "order_link_id"),
+    )
+
+
+def _object(payload: dict[str, object], field_name: str) -> dict[str, object]:
+    value = payload.get(field_name)
+    if not isinstance(value, dict):
+        raise AccountingContractError(f"{field_name} must be an object")
+    return value
+
+
+def _objects(payload: dict[str, object], field_name: str) -> tuple[dict[str, object], ...]:
+    value = payload.get(field_name, [])
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise AccountingContractError(f"{field_name} must be an array of objects")
+    return tuple(value)
+
+
+def _text(payload: dict[str, object], field_name: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str):
+        raise AccountingContractError(f"{field_name} must be text")
+    return value
+
+
+def _optional_text(payload: dict[str, object], field_name: str) -> str | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AccountingContractError(f"{field_name} must be text or null")
+    return value
+
+
+def _integer(payload: dict[str, object], field_name: str) -> int:
+    value = payload.get(field_name)
+    if type(value) is not int:
+        raise AccountingContractError(f"{field_name} must be an integer")
+    return value
+
+
+def _optional_integer(payload: dict[str, object], field_name: str) -> int | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise AccountingContractError(f"{field_name} must be an integer or null")
+    return value
+
+
+def _decimal(payload: dict[str, object], field_name: str) -> Decimal:
+    value = payload.get(field_name)
+    if not isinstance(value, str):
+        raise AccountingContractError(f"{field_name} must be an exact decimal string")
+    try:
+        decimal = Decimal(value)
+    except Exception as error:
+        raise AccountingContractError(f"{field_name} must be an exact decimal string") from error
+    if not decimal.is_finite():
+        raise AccountingContractError(f"{field_name} must be finite")
+    return decimal
+
+
+def _decimal_or_default(
+    payload: dict[str, object], field_name: str, default: Decimal
+) -> Decimal:
+    return default if field_name not in payload else _decimal(payload, field_name)
+
+
+def _datetime(payload: dict[str, object], field_name: str) -> datetime:
+    value = _text(payload, field_name)
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as error:
+        raise AccountingContractError(f"{field_name} must be an ISO timestamp") from error
+
+
+def _enum_text_or_none(payload: dict[str, object], field_name: str) -> str | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AccountingContractError(f"{field_name} must be text or null")
+    return value
+
+
+def _exit_reason_or_none(payload: dict[str, object]) -> ExitReason | None:
+    value = _enum_text_or_none(payload, "exit_reason")
+    return None if value is None else ExitReason(value)
+
+
+def _reference_type_or_none(payload: dict[str, object]) -> ReferenceType | None:
+    value = _enum_text_or_none(payload, "reference_type")
+    return None if value is None else ReferenceType(value)
+
+
+def _price_or_none(payload: dict[str, object], field_name: str) -> Price | None:
+    return None if payload.get(field_name) is None else Price(_decimal(payload, field_name))
 
 
 def ensure_unique_events(events: tuple[AccountingEvent, ...]) -> tuple[AccountingEvent, ...]:

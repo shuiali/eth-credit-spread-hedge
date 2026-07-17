@@ -1,0 +1,64 @@
+{
+  "version": "M3.1",
+  "scope": "offline-only composition contract",
+  "runtime_facade": {
+    "module": "eth_credit_hedge.application.authoritative_runtime",
+    "class": "AuthoritativeStrategyRuntime",
+    "factory": "assemble_authoritative_runtime",
+    "wiring_status": "declared; production wiring is deferred to Plans 3.2-3.7"
+  },
+  "authorities": {
+    "configuration": "AuthoritativeStrategyRuntime.configuration -> RuntimeConfig/EnvironmentProfile",
+    "clock": "AuthoritativeStrategyRuntime.clock -> ClockPort",
+    "public_market_data": "AuthoritativeStrategyRuntime.market_data -> MarketDataPort",
+    "private_executions": "AuthoritativeStrategyRuntime.private_executions -> PrivateExecutionPort",
+    "option_entry_and_close": "AuthoritativeStrategyRuntime.coordinator -> OptionSpreadEntryService/StrategyCloseService",
+    "level_generation": "AuthoritativeStrategyRuntime.strategy_math -> StrategyMathEngine",
+    "crossings": "AuthoritativeStrategyRuntime.coordinator -> LiveStrategyCoordinator",
+    "hedge_entry_and_exits": "AuthoritativeStrategyRuntime.coordinator -> LiveStrategyCoordinator",
+    "protection": "AuthoritativeStrategyRuntime.coordinator -> ProtectiveExitService",
+    "internal_lots": "AuthoritativeStrategyRuntime.allocator -> NetPositionAllocator",
+    "accounting": "AuthoritativeStrategyRuntime.accounting -> AccountingRuntime",
+    "recovery_debt": "AuthoritativeStrategyRuntime.accounting -> combined-ledger projection",
+    "risk": "AuthoritativeStrategyRuntime.risk -> RuntimeRiskStateBuilder/RiskEngine",
+    "persistence": "AuthoritativeStrategyRuntime.coordinator -> SQLite persistence ports",
+    "reconciliation": "AuthoritativeStrategyRuntime.reconciliation -> StartupReconciliationService",
+    "health": "AuthoritativeStrategyRuntime.health -> MutableOperationalState",
+    "kill_switch": "AuthoritativeStrategyRuntime.shutdown -> KillSwitchController",
+    "shutdown": "AuthoritativeStrategyRuntime.shutdown -> StrategyCloseService",
+    "metrics_and_logging": "AuthoritativeStrategyRuntime.health -> operational and structured log projections"
+  },
+  "ports": [
+    "MarketDataPort",
+    "PrivateExecutionPort",
+    "TradingMutationPort",
+    "ExchangeQueryPort",
+    "FundingPort",
+    "ClockPort"
+  ],
+  "approved_constructor_modules": {
+    "StrategyMathEngine": [
+      "src/eth_credit_hedge/application/demo_strategy_runtime.py",
+      "src/eth_credit_hedge/application/strategy_math_runtime.py",
+      "src/eth_credit_hedge/core/hedge_engine.py",
+      "src/eth_credit_hedge/core/virtual_levels.py",
+      "src/eth_credit_hedge/domain/live_recovery.py",
+      "src/eth_credit_hedge/application/live_strategy_coordinator.py",
+      "src/eth_credit_hedge/application/multi_level_execution.py",
+      "src/eth_credit_hedge/application/one_level_coordinator.py"
+    ],
+    "AccountingRuntime": [
+      "src/eth_credit_hedge/application/demo_strategy_runtime.py",
+      "src/eth_credit_hedge/interfaces/ledger_simulated_lifecycle.py"
+    ],
+    "NetPositionAllocator": [],
+    "StartupReconciliationService": []
+  },
+  "observable_runtime_facts": [
+    "DemoRuntimeJournal events and snapshots",
+    "SQLite execution, journal, and accounting stores",
+    "Accounting ledger digest and reconciliation records",
+    "MutableOperationalState health snapshot",
+    "SecretSafeJsonLogger events"
+  ]
+}

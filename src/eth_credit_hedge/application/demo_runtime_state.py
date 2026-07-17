@@ -314,7 +314,7 @@ def reduce_demo_runtime_state(
     elif event.event_type is JournalEventType.STOP_RECEIVED:
         level = _required_level(runtime, level_id)
         realized = _decimal(payload, "realized_pnl")
-        added_debt = _decimal(payload, "actual_stop_debt")
+        confirmed_debt = _decimal(payload, "confirmed_debt")
         runtime = runtime.replace_level(
             replace(
                 level,
@@ -327,7 +327,7 @@ def reduce_demo_runtime_state(
                 active_quantity=ZERO,
                 average_entry_price=None,
                 allocated_debt=ZERO,
-                confirmed_debt=level.confirmed_debt + added_debt,
+                confirmed_debt=confirmed_debt,
                 realized_pnl=level.realized_pnl + realized,
             )
         )

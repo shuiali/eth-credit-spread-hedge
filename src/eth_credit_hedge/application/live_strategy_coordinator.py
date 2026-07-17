@@ -28,6 +28,8 @@ from eth_credit_hedge.application.same_level_recovery import (
 from eth_credit_hedge.config import StrategyCostConfig
 from eth_credit_hedge.core.virtual_levels import HedgeLevel, LevelState
 from eth_credit_hedge.domain.client_order_ids import ClientOrderRole
+from eth_credit_hedge.domain.accounting.events import HedgeRole as AccountingHedgeRole
+from eth_credit_hedge.domain.accounting.hedge_ledger import HedgeLotSnapshot
 from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerState
 from eth_credit_hedge.domain.execution import LiveExecutionState, PlaceOrderRequest
 from eth_credit_hedge.domain.instrument_rules import (
@@ -38,7 +40,7 @@ from eth_credit_hedge.domain.instrument_rules import (
 )
 from eth_credit_hedge.domain.instruments import InstrumentSpec
 from eth_credit_hedge.domain.journal import JournalEventType
-from eth_credit_hedge.domain.live_recovery import SameLevelRecoveryPlanner
+from eth_credit_hedge.domain.live_recovery import RecoveryDebtState, SameLevelRecoveryPlanner
 from eth_credit_hedge.domain.market_data import TriggerPriceEvent, TriggerPriceSource
 from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits, TradeProposal
 from eth_credit_hedge.domain.strategy_math import (
@@ -242,9 +244,14 @@ class LiveStrategyCoordinator:
                 self._account.get_wallet_state(),
             )
             hedge_level = _hedge_level(level)
+            ledger_state = await self._require_accounting_projection()
+            level_debt = ledger_state.debt_for_level(
+                self._journal.state.cycle_id,
+                level.level_id,
+            ).value
             role = (
                 LiveHedgeRole.RECOVERY
-                if level.confirmed_debt > ZERO
+                if level_debt > ZERO
                 else LiveHedgeRole.BASELINE
             )
             if role is LiveHedgeRole.BASELINE:
@@ -318,6 +325,7 @@ class LiveStrategyCoordinator:
                     proposed_notional=quantized.notional + reserved_notional,
                     last_market_event_at_utc=event.observed_timestamp,
                     now_utc=self._clock(),
+                    accounting=ledger_state,
                 )
                 risk_state = replace(
                     risk_state,
@@ -392,17 +400,15 @@ class LiveStrategyCoordinator:
                 reserved_quantity += quantized.quantity
                 reserved_notional += quantized.notional
             else:
-                debt = await self._store.load_recovery_debt_snapshot(level.level_id)
-                if debt is None:
-                    blocked.append(
-                        (level.level_id, ("recovery debt snapshot is missing",))
-                    )
-                    continue
-                raw_quantity = (
-                    level.option_budget + debt.debt.confirmed_debt
-                ) / (level.entry_price - level.take_profit_price)
+                debt = _ledger_recovery_debt_state(
+                    ledger_state,
+                    cycle_id=self._journal.state.cycle_id,
+                    level_id=level.level_id,
+                )
                 candidate_quantity = ceil_to_step(
-                    raw_quantity,
+                    (
+                        level.option_budget + debt.confirmed_debt
+                    ) / (level.entry_price - level.take_profit_price),
                     self._instrument.lot_size_filter.qty_step,
                 )
                 candidate_notional = candidate_quantity * level.entry_price
@@ -414,6 +420,7 @@ class LiveStrategyCoordinator:
                     proposed_notional=candidate_notional + reserved_notional,
                     last_market_event_at_utc=event.observed_timestamp,
                     now_utc=self._clock(),
+                    accounting=ledger_state,
                 )
                 risk_state = replace(
                     risk_state,
@@ -426,7 +433,7 @@ class LiveStrategyCoordinator:
                 )
                 plan = self._recovery_planner.plan(
                     hedge_level,
-                    debt.debt,
+                    debt,
                     self._instrument,
                     risk_state,
                     self._risk_limits,
@@ -447,6 +454,7 @@ class LiveStrategyCoordinator:
                         entry_id=entry_id,
                         attempt=attempt,
                         risk_state=risk_state,
+                        debt=debt,
                     ),
                 )
                 reserved_quantity += plan.quantity
@@ -551,6 +559,7 @@ class LiveStrategyCoordinator:
         entry_id: str,
         attempt: int,
         risk_state: Any,
+        debt: RecoveryDebtState,
     ) -> None:
         await self._register_lot(
             level=level,
@@ -585,12 +594,13 @@ class LiveStrategyCoordinator:
 
         lifecycle = self._lifecycle_factory()
         async with self._entry_lock:
-            submission = await self._recovery.submit_recovery(
+            submission = await self._recovery.submit_recovery_from_ledger(
                 level=level,
                 instrument=self._instrument,
                 risk_state=risk_state,
                 limits=self._risk_limits,
                 order_link_id=entry_id,
+                debt=debt,
                 before_persisted_submission=before_submission,
             )
             if submission.entry_snapshot is None:
@@ -641,60 +651,36 @@ class LiveStrategyCoordinator:
                 break
             await self._sleeper(self._exit_poll_interval_seconds)
         state_before = self._journal.state.level(level_id)
-        realized = snapshot.realized_pnl
-        ledger_state = (
-            None
-            if self._accounting_refresh is None
-            else await self._accounting_refresh()
+        await self._synchronize_allocation(snapshot)
+        ledger_state = await self._require_accounting_projection()
+        lot = _ledger_lot_for_level_attempt(
+            ledger_state,
+            cycle_id=self._journal.state.cycle_id,
+            level_id=level_id,
+            attempt=state_before.attempts,
+            role=state_before.active_role,
         )
+        realized = lot.net_realized_pnl.value
+        remaining_debt = ledger_state.debt_for_level(
+            self._journal.state.cycle_id,
+            level_id,
+        ).value
         if snapshot.state is LiveExecutionState.CLOSED_STOP:
-            await self._synchronize_allocation(snapshot)
-            actual_debt = max(-realized, ZERO)
-            if state_before.active_role is LiveHedgeRole.RECOVERY:
-                await self._recovery.record_recovery_stop_debt(
-                    level_id=level_id,
-                    actual_stop_debt=actual_debt,
-                    projected_debt=actual_debt,
-                )
-            else:
-                await self._recovery.record_confirmed_stop_debt(
-                    level_id=level_id,
-                    actual_stop_debt=actual_debt,
-                    projected_debt=actual_debt,
-                )
+            actual_debt = lot.debt_increment.value
             await self._journal.append(
                 JournalEventType.STOP_RECEIVED,
                 level_id=level_id,
                 payload={
                     "realized_pnl": str(realized),
                     "actual_stop_debt": str(actual_debt),
-                    "price_loss": str(snapshot.stop_price_loss),
-                    "allocated_entry_fees": str(
-                        snapshot.allocated_stop_entry_fees
-                    ),
-                    "stop_fees": str(snapshot.stop_fees),
-                    "funding_pnl": str(snapshot.funding_pnl),
-                    "slippage_versus_reference": str(
-                        snapshot.stop_slippage_versus_reference
-                    ),
-                    "total_debt": str(actual_debt),
+                    "confirmed_debt": str(remaining_debt),
                     **_geometry_payload(state_before),
                 },
                 event_id=f"exit:{snapshot.stop_order_link_id}:{snapshot.version}",
             )
-            self._assert_recovery_debt_projection(ledger_state)
             return
         if snapshot.state is not LiveExecutionState.CLOSED_TP:
             raise RuntimeError("lifecycle returned a non-terminal exit")
-        remaining_debt = ZERO
-        await self._synchronize_allocation(snapshot)
-        if state_before.active_role is LiveHedgeRole.RECOVERY:
-            settled = await self._recovery.settle_take_profit(
-                level_id=level_id,
-                realized_take_profit=max(realized, ZERO),
-                zone_budget=state_before.option_budget,
-            )
-            remaining_debt = settled.debt.confirmed_debt
         await self._journal.append(
             JournalEventType.TAKE_PROFIT_RECEIVED,
             level_id=level_id,
@@ -705,7 +691,6 @@ class LiveStrategyCoordinator:
             },
             event_id=f"exit:{snapshot.tp_order_link_id}:{snapshot.version}",
         )
-        self._assert_recovery_debt_projection(ledger_state)
 
     async def _register_lot(
         self,
@@ -757,20 +742,12 @@ class LiveStrategyCoordinator:
             await self._account.get_positions("linear", "ETHUSDT")
         )
 
-    def _assert_recovery_debt_projection(
-        self,
-        ledger_state: CombinedLedgerState | None,
-    ) -> None:
-        if ledger_state is None:
-            return
-        projected = sum(
-            (level.confirmed_debt for level in self._journal.state.levels),
-            ZERO,
-        )
-        if projected != ledger_state.confirmed_recovery_debt.value:
+    async def _require_accounting_projection(self) -> CombinedLedgerState:
+        if self._accounting_refresh is None:
             raise RuntimeError(
-                "legacy recovery-debt projection differs from accounting ledger"
+                "ledger-owned lifecycle requires accounting projection refresh"
             )
+        return await self._accounting_refresh()
 
 
 def _hedge_level(level: Any) -> HedgeLevel:
@@ -789,6 +766,49 @@ def _hedge_level(level: Any) -> HedgeLevel:
         entry_armed=level.armed,
         recovery_debt=level.confirmed_debt,
     )
+
+
+def _ledger_recovery_debt_state(
+    state: CombinedLedgerState,
+    *,
+    cycle_id: str,
+    level_id: int,
+) -> RecoveryDebtState:
+    debt = state.debt_for_level(cycle_id, level_id).value
+    return RecoveryDebtState(
+        projected_debt=debt,
+        confirmed_debt=debt,
+        allocated_debt=ZERO,
+        remaining_debt=debt,
+    )
+
+
+def _ledger_lot_for_level_attempt(
+    state: CombinedLedgerState,
+    *,
+    cycle_id: str,
+    level_id: int,
+    attempt: int,
+    role: LiveHedgeRole | None,
+) -> HedgeLotSnapshot:
+    expected_role = (
+        AccountingHedgeRole.RECOVERY
+        if role is LiveHedgeRole.RECOVERY
+        else AccountingHedgeRole.BASELINE
+    )
+    matches = tuple(
+        lot
+        for lot in state.hedge.lots
+        if lot.cycle_id == cycle_id
+        and lot.level_id == level_id
+        and lot.attempt == attempt
+        and lot.role is expected_role
+    )
+    if len(matches) != 1:
+        raise RuntimeError(
+            "ledger projection does not identify exactly one lifecycle hedge lot"
+        )
+    return matches[0]
 
 
 def _geometry_payload(level: Any) -> dict[str, str]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -15,15 +16,16 @@ from eth_credit_hedge.application.runtime_risk_state import RuntimeRiskStateBuil
 from eth_credit_hedge.application.demo_strategy_runtime import (
     _bounded_option_entry_limits,
     _clock_refresh_loop,
-    _daily_realized_pnl,
 )
 from eth_credit_hedge.domain.client_order_ids import ClientOrderId, ClientOrderRole
+from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerReconstructor
 from eth_credit_hedge.domain.execution import (
     ExchangePosition,
     LiveExecutionState,
     WalletState,
 )
 from eth_credit_hedge.domain.protected_execution import ProtectionSnapshot
+from eth_credit_hedge.domain.strategy_math.units import Money
 
 
 NOW = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
@@ -70,6 +72,14 @@ def short_position(*, liquidation: str | None = "3300") -> ExchangePosition:
     )
 
 
+def accounting(*, debt: str = "0", mark_pnl: str = "0"):
+    return replace(
+        CombinedLedgerReconstructor().reconstruct(()),
+        confirmed_recovery_debt=Money(Decimal(debt)),
+        net_combined_mark_pnl=Money(Decimal(mark_pnl)),
+    )
+
+
 def test_builder_uses_all_live_and_durable_risk_inputs() -> None:
     runtime = DemoRuntimeState(
         cycle_id="cycle-risk",
@@ -105,6 +115,7 @@ def test_builder_uses_all_live_and_durable_risk_inputs() -> None:
         proposed_notional=Decimal("50"),
         last_market_event_at_utc=NOW - timedelta(milliseconds=500),
         now_utc=NOW,
+        accounting=accounting(debt="2", mark_pnl="-4"),
     )
 
     assert state.current_perp_quantity == Decimal("0.02")
@@ -112,7 +123,7 @@ def test_builder_uses_all_live_and_durable_risk_inputs() -> None:
     assert state.post_trade_margin_usage == Decimal("0.11")
     assert state.post_trade_liquidation_distance == Decimal("0.1")
     assert state.confirmed_recovery_debt == Decimal("2")
-    assert state.realized_cycle_loss == Decimal("3")
+    assert state.realized_cycle_loss == Decimal("4")
     assert state.daily_realized_loss == Decimal("4")
     assert state.entries_for_level == 3
     assert state.active_levels == 1
@@ -139,25 +150,13 @@ def test_builder_fails_closed_for_stale_market_and_unusable_account_data() -> No
         proposed_notional=Decimal("1"),
         last_market_event_at_utc=NOW - timedelta(seconds=2),
         now_utc=NOW,
+        accounting=accounting(),
     )
 
     assert state.post_trade_margin_usage == Decimal("1")
     assert state.post_trade_liquidation_distance == Decimal("0")
     assert not state.market_data_fresh
     assert not state.reconciliation_succeeded
-
-
-def test_new_cycle_seeds_only_current_utc_day_realized_pnl() -> None:
-    class SnapshotReader:
-        async def load_all_protection_snapshots(
-            self,
-        ) -> tuple[ProtectionSnapshot, ...]:
-            return (
-                closed_snapshot(1, NOW),
-                closed_snapshot(2, NOW - timedelta(days=1)),
-            )
-
-    assert asyncio.run(_daily_realized_pnl(SnapshotReader(), NOW)) == Decimal("0.8")
 
 
 def test_clock_refresh_loop_repeats_at_the_requested_interval() -> None:

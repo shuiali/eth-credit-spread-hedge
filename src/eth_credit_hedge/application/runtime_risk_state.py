@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from eth_credit_hedge.application.demo_runtime_state import DemoRuntimeState
+from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerState
 from eth_credit_hedge.domain.execution import ExchangePosition, WalletState
 from eth_credit_hedge.domain.risk import RiskState
 
@@ -32,6 +33,7 @@ class RuntimeRiskStateBuilder:
         proposed_notional: Decimal,
         last_market_event_at_utc: datetime | None,
         now_utc: datetime,
+        accounting: CombinedLedgerState,
     ) -> RiskState:
         now = _utc(now_utc)
         proposed = Decimal(proposed_notional)
@@ -66,19 +68,16 @@ class RuntimeRiskStateBuilder:
             observed = _utc(last_market_event_at_utc)
             age = now - observed
             market_fresh = timedelta(0) <= age <= self._maximum_market_data_age
-        cycle_pnl = sum((level.realized_pnl for level in runtime.levels), ZERO)
         cutoff = now - timedelta(minutes=1)
+        ledger_pnl = accounting.net_combined_mark_pnl.value
         return RiskState(
             current_perp_quantity=current_quantity,
             current_perp_notional=current_notional,
             post_trade_margin_usage=margin_usage,
             post_trade_liquidation_distance=liquidation_distance,
-            confirmed_recovery_debt=sum(
-                (level.confirmed_debt for level in runtime.levels),
-                ZERO,
-            ),
-            realized_cycle_loss=max(-cycle_pnl, ZERO),
-            daily_realized_loss=max(-runtime.daily_realized_pnl, ZERO),
+            confirmed_recovery_debt=accounting.confirmed_recovery_debt.value,
+            realized_cycle_loss=max(-ledger_pnl, ZERO),
+            daily_realized_loss=max(-ledger_pnl, ZERO),
             entries_for_level=runtime.level(level_id).attempts,
             active_levels=sum(
                 level.active_entry_order_link_id is not None

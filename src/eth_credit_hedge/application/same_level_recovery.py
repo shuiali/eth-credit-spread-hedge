@@ -180,6 +180,70 @@ class SameLevelRecoveryService:
             raise
         return RecoverySubmission(plan, entry_snapshot, allocated)
 
+    async def submit_recovery_from_ledger(
+        self,
+        *,
+        level: HedgeLevel,
+        instrument: InstrumentSpec,
+        risk_state: RiskState,
+        limits: RiskLimits,
+        order_link_id: str,
+        debt: RecoveryDebtState,
+        before_persisted_submission: (
+            Callable[[RecoveryEntryPlan], Awaitable[None]] | None
+        ) = None,
+    ) -> RecoverySubmission:
+        plan = self._planner.plan(
+            level,
+            debt,
+            instrument,
+            risk_state,
+            limits,
+        )
+        if (
+            plan.approved
+            and self._entry_gate is not None
+            and not self._entry_gate.entries_allowed
+        ):
+            plan = replace(
+                plan,
+                approved=False,
+                quantity=None,
+                expected_take_profit=Decimal("0"),
+                allocated_debt=Decimal("0"),
+                reasons=plan.reasons + ("kill switch blocks new entries",),
+                locked_action=None,
+            )
+        debt_snapshot = RecoveryDebtSnapshot(
+            level_id=level.level_id,
+            debt=debt,
+            version=1,
+            updated_at=self._clock(),
+        )
+        if not plan.approved or plan.quantity is None:
+            return RecoverySubmission(plan, None, debt_snapshot)
+
+        if before_persisted_submission is not None:
+            await before_persisted_submission(plan)
+
+        request = PlaceOrderRequest(
+            category="linear",
+            symbol="ETHUSDT",
+            side="Sell",
+            order_type="Market",
+            quantity=plan.quantity,
+            order_link_id=order_link_id,
+            time_in_force="IOC",
+            reduce_only=False,
+            position_idx=0,
+        )
+        persisted_entry = await self._entry_service.persist_entry_intent(request)
+        entry_snapshot = await self._entry_service.submit_persisted_entry(
+            request,
+            persisted_entry,
+        )
+        return RecoverySubmission(plan, entry_snapshot, debt_snapshot)
+
     async def settle_take_profit(
         self,
         *,

@@ -878,12 +878,7 @@ async def run_simulated_strategy_command(
         "final_level_attempts": [
             level.attempts for level in restored.state.levels
         ],
-        "final_recovery_debt": str(
-            sum(
-                (level.confirmed_debt for level in restored.state.levels),
-                ZERO,
-            )
-        ),
+        "final_recovery_debt": str(accounting.state.confirmed_recovery_debt.value),
         "final_linear_position_count": len(positions),
         "final_linear_order_count": len(orders),
         "close_verified": close_verified,
@@ -982,7 +977,6 @@ async def _open_new_cycle(
             long_option_symbol=command.long_symbol,
             option_quantity=command.option_quantity,
             levels=tuple(DemoLevelRuntimeState.from_level(level) for level in levels),
-            daily_realized_pnl=await _daily_realized_pnl(store, clock()),
         ),
         clock=clock,
     )
@@ -1940,21 +1934,6 @@ def _required_delivery(instrument: InstrumentSpec) -> datetime:
     if instrument.delivery_time_utc is None:
         raise ValueError("option instrument has no delivery time")
     return instrument.delivery_time_utc
-
-
-async def _daily_realized_pnl(
-    store: _ProtectionSnapshotReader,
-    observed_at_utc: datetime,
-) -> Decimal:
-    day = observed_at_utc.astimezone(timezone.utc).date()
-    return sum(
-        (
-            snapshot.realized_pnl
-            for snapshot in await store.load_all_protection_snapshots()
-            if snapshot.updated_at.astimezone(timezone.utc).date() == day
-        ),
-        ZERO,
-    )
 
 
 def _simulated_option_instrument(

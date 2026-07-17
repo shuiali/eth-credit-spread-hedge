@@ -93,7 +93,11 @@ def test_reducer_traces_stop_recovery_and_take_profit() -> None:
         event(
             3,
             JournalEventType.STOP_RECEIVED,
-            {"realized_pnl": "-0.25", "actual_stop_debt": "0.25"},
+            {
+                "realized_pnl": "-0.25",
+                "actual_stop_debt": "0.25",
+                "confirmed_debt": "0.25",
+            },
         ),
         event(
             4,

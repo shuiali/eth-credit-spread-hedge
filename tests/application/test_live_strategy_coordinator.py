@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from eth_credit_hedge.application.accounting_runtime import AccountingRuntime
 from eth_credit_hedge.application.demo_runtime_journal import DemoRuntimeJournal
 from eth_credit_hedge.application.demo_runtime_state import (
     DemoLevelRuntimeState,
@@ -20,6 +22,9 @@ from eth_credit_hedge.application.one_level_entry import OneLevelEntryService
 from eth_credit_hedge.application.one_level_lifecycle import (
     OneLevelLifecycleService,
 )
+from eth_credit_hedge.application.private_execution_accounting import (
+    PrivateExecutionClassifier,
+)
 from eth_credit_hedge.application.protective_exits import ProtectiveExitService
 from eth_credit_hedge.application.runtime_risk_state import RuntimeRiskStateBuilder
 from eth_credit_hedge.application.same_level_recovery import SameLevelRecoveryService
@@ -31,6 +36,8 @@ from eth_credit_hedge.domain.client_order_ids import (
     ClientOrderId,
     ClientOrderRole,
 )
+from eth_credit_hedge.domain.accounting.reconstruction import CombinedLedgerReconstructor
+from eth_credit_hedge.domain.execution import ExecutionUpdate, ExecutionUpdateBatch
 from eth_credit_hedge.domain.instruments import (
     InstrumentSpec,
     LotSizeFilter,
@@ -43,6 +50,9 @@ from eth_credit_hedge.domain.risk import RiskEngine, RiskLimits
 from eth_credit_hedge.domain.strategy_math import StopMode
 from eth_credit_hedge.infrastructure.persistence.sqlite_execution_store import (
     SqliteExecutionStore,
+)
+from eth_credit_hedge.infrastructure.persistence.sqlite_accounting_store import (
+    SqliteAccountingStore,
 )
 from eth_credit_hedge.infrastructure.persistence.sqlite_journal_store import (
     SqliteJournalStore,
@@ -135,9 +145,16 @@ async def run_stop_recovery(path: Path) -> tuple[str, str]:
         start_time_utc=NOW,
     )
     execution_store = SqliteExecutionStore(path / "execution.sqlite3")
+    accounting_store = SqliteAccountingStore(path / "accounting.sqlite3")
     journal_store = SqliteJournalStore(path / "journal.sqlite3")
     await execution_store.initialize()
+    await accounting_store.initialize()
     await journal_store.initialize()
+    accounting = AccountingRuntime(
+        store=accounting_store,
+        reconstructor=CombinedLedgerReconstructor(),
+    )
+    await accounting.initialize()
     event_numbers = itertools.count(1)
     runtime_journal = await DemoRuntimeJournal.create(
         store=journal_store,
@@ -221,6 +238,25 @@ async def run_stop_recovery(path: Path) -> tuple[str, str]:
             )
         )
 
+    async def refresh_accounting():
+        executions = await execution_store.load_all_executions()
+        if not executions:
+            return accounting.state
+        payload = "\n".join(_execution_identity(execution) for execution in executions)
+        classifier = PrivateExecutionClassifier(
+            cycle_id="SIM-CYCLE-1",
+            cycle_number=1,
+            strategy_instance="SIM",
+        )
+        return await accounting.apply_rest_update_batch(
+            ExecutionUpdateBatch(
+                executions=executions,
+                received_at=exchange.current_time_utc,
+                raw_payload_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+            ),
+            classifier,
+        )
+
     async with asyncio.TaskGroup() as group:
         coordinator = LiveStrategyCoordinator(
             journal=runtime_journal,
@@ -240,6 +276,7 @@ async def run_stop_recovery(path: Path) -> tuple[str, str]:
             clock=lambda: exchange.current_time_utc,
             sleeper=advance,
             exit_poll_interval_seconds=0,
+            accounting_refresh=refresh_accounting,
         )
         await coordinator.on_trigger(trigger(exchange, "3010", 1))
         exchange.advance_market(Decimal("2999"), elapsed_ms=1)
@@ -288,6 +325,7 @@ async def run_stop_recovery(path: Path) -> tuple[str, str]:
         clock=lambda: exchange.current_time_utc,
     )
     assert restored.state.level(1).confirmed_debt == Decimal("0")
+    assert accounting.state.confirmed_recovery_debt.value == Decimal("0")
     assert not await exchange.get_positions("linear", "ETHUSDT")
     assert not await exchange.get_open_orders("linear", "ETHUSDT")
     return exchange.event_log_digest, restored.state.level(1).state.value
@@ -297,3 +335,19 @@ def test_baseline_stop_same_level_recovery_tp_is_durable(tmp_path: Path) -> None
     first = asyncio.run(run_stop_recovery(tmp_path / "first"))
     second = asyncio.run(run_stop_recovery(tmp_path / "second"))
     assert first == second
+
+
+def _execution_identity(execution: ExecutionUpdate) -> str:
+    return "|".join(
+        (
+            execution.execution_id,
+            execution.order_id,
+            execution.order_link_id,
+            execution.symbol,
+            execution.side,
+            str(execution.price),
+            str(execution.quantity),
+            str(execution.fee),
+            execution.executed_at.isoformat(),
+        )
+    )

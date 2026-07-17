@@ -163,3 +163,30 @@ def test_facade_assembly_does_not_construct_hidden_authorities() -> None:
         "NetPositionAllocator",
         "StartupReconciliationService",
     } & set(calls)
+
+
+def test_live_coordinator_lifecycle_uses_ledger_owned_projections() -> None:
+    source = (
+        ROOT
+        / "src"
+        / "eth_credit_hedge"
+        / "application"
+        / "live_strategy_coordinator.py"
+    ).read_text(encoding="utf-8")
+    forbidden = {
+        "snapshot.realized_pnl",
+        "snapshot.confirmed_recovery_debt",
+        "snapshot.stop_price_loss",
+        "snapshot.allocated_stop_entry_fees",
+        "snapshot.stop_fees",
+        "snapshot.funding_pnl",
+        "record_confirmed_stop_debt(",
+        "record_recovery_stop_debt(",
+        "settle_take_profit(",
+        "load_recovery_debt_snapshot(",
+    }
+    assert not forbidden & {
+        item for item in forbidden if item in source
+    }
+    assert "_require_accounting_projection" in source
+    assert "submit_recovery_from_ledger" in source

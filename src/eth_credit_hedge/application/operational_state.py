@@ -102,7 +102,7 @@ class MutableOperationalState:
                 ZERO,
             )
             debt = (
-                sum((level.confirmed_debt for level in levels), ZERO)
+                ZERO
                 if accounting is None
                 else accounting.confirmed_recovery_debt.value
             )
@@ -132,8 +132,6 @@ class MutableOperationalState:
                     accounting.net_combined_mark_pnl.value
                     if accounting is not None
                     else ZERO
-                    if runtime is None
-                    else runtime.daily_realized_pnl
                 ),
                 order_rejections=0,
                 duplicate_executions=0,

@@ -21,7 +21,8 @@ from eth_credit_hedge.domain.accounting.events import (
     EventSource,
     FundingRecorded,
     HedgeExecutionRecorded,
-    RecoveryDebtChanged,
+    RecoveryAllocationRecorded,
+    RecoveryDebtIncremented,
     OptionQuoteRecorded,
     OptionExecutionRecorded,
     event_from_dict,
@@ -217,14 +218,30 @@ def test_runtime_caps_actual_recovery_settlement_and_snapshots_shutdown_once(
                 ),
             )
 
+        increments = tuple(
+            event
+            for event in runtime.events
+            if isinstance(event, RecoveryDebtIncremented)
+        )
+        assert len(increments) == 1
+        assert increments[0].source_hedge_lot_id == "m2-6-base"
+        assert increments[0].source_stop_execution_ids == (
+            "m2-6-base-stop-a",
+            "m2-6-base-stop-b",
+        )
+        assert increments[0].amount == Money(D("12.9"))
+
         settlements = tuple(
             event
             for event in runtime.events
-            if isinstance(event, RecoveryDebtChanged)
+            if isinstance(event, RecoveryAllocationRecorded)
         )
         assert len(settlements) == 1
-        assert settlements[0].actual_recovery_allocation == Money(D("12.9"))
+        assert settlements[0].target == increments[0].target
+        assert settlements[0].recovery_hedge_lot_id == "m2-6-recovery"
+        assert settlements[0].allocated_amount == Money(D("12.9"))
         assert runtime.state.confirmed_recovery_debt == Money(D("0.0"))
+        assert runtime.state.debt_for_attempt(increments[0].target) == Money(D("0.0"))
 
         first = await runtime.record_shutdown_snapshot(
             cycle_id="m2-6-cycle",

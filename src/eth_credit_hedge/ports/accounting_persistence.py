@@ -14,6 +14,15 @@ from eth_credit_hedge.domain.strategy_math.units import Price
 
 
 class AccountingLedgerPersistencePort(Protocol):
+    async def append_events_and_snapshot(
+        self,
+        events: tuple[AccountingEvent, ...],
+        state: CombinedLedgerState,
+        *,
+        hedge_mark: Price | None,
+        hedge_liquidation: Price | None,
+    ) -> tuple[int, ...]: ...
+
     async def append_event_and_snapshot(
         self,
         event: AccountingEvent,

@@ -185,8 +185,10 @@ class CombinedLedgerReconstructor:
         extra_option_fees = ZERO
         extra_hedge_fees = ZERO
         execution_cash_flow = ZERO
-        debt_increments = ZERO
-        recovery_allocations = ZERO
+        legacy_debt_increments = ZERO
+        legacy_recovery_allocations = ZERO
+        explicit_debt_increments = ZERO
+        explicit_recovery_allocations = ZERO
         recovery_attempts: dict[
             HedgeAttemptKey, tuple[Decimal, Decimal, list[str]]
         ] = {}
@@ -210,8 +212,8 @@ class CombinedLedgerReconstructor:
             elif isinstance(event, OptionQuoteRecorded):
                 option_ledger.apply_quote(event)
             elif isinstance(event, RecoveryDebtChanged):
-                debt_increments += event.increment.value
-                recovery_allocations += event.actual_recovery_allocation.value
+                legacy_debt_increments += event.increment.value
+                legacy_recovery_allocations += event.actual_recovery_allocation.value
             elif isinstance(event, RecoveryDebtIncremented):
                 increment, allocation, event_ids = recovery_attempts.get(
                     event.target, (ZERO, ZERO, [])
@@ -221,7 +223,7 @@ class CombinedLedgerReconstructor:
                     allocation,
                     [*event_ids, event.event_id],
                 )
-                debt_increments += event.amount.value
+                explicit_debt_increments += event.amount.value
             elif isinstance(event, RecoveryAllocationRecorded):
                 increment, allocation, event_ids = recovery_attempts.get(
                     event.target, (ZERO, ZERO, [])
@@ -231,7 +233,7 @@ class CombinedLedgerReconstructor:
                     allocation + event.allocated_amount.value,
                     [*event_ids, event.event_id],
                 )
-                recovery_allocations += event.allocated_amount.value
+                explicit_recovery_allocations += event.allocated_amount.value
                 recorded_recovery_profit += (
                     event.gross_realized_recovery_profit.value
                     - event.fees.value
@@ -288,7 +290,14 @@ class CombinedLedgerReconstructor:
         liquidation_equity_change = (
             ending_cash + liquidation_open_value - self._initial_cash.value
         )
-        total_debt_increments = hedge.confirmed_recovery_debt.value + debt_increments
+        if recovery_attempts:
+            total_debt_increments = explicit_debt_increments
+            recovery_allocations = explicit_recovery_allocations
+        else:
+            total_debt_increments = (
+                hedge.confirmed_recovery_debt.value + legacy_debt_increments
+            )
+            recovery_allocations = legacy_recovery_allocations
         confirmed_debt = total_debt_increments - recovery_allocations
         actual_recovery_profit = sum(
             (
@@ -420,6 +429,8 @@ class CombinedLedgerReconstructor:
             OptionQuoteRecorded,
             PositionReconciled,
             RecoveryDebtChanged,
+            RecoveryDebtIncremented,
+            RecoveryAllocationRecorded,
             AccountingSnapshotCreated,
         )
         return tuple(

@@ -23,6 +23,7 @@ from eth_credit_hedge.domain.accounting.events import (
     MigratedFromLegacySnapshot,
     OptionExecutionRecorded,
     OptionQuoteRecorded,
+    RecoveryAllocationRecorded,
     RecoveryDebtChanged,
     ReferencePriceRecorded,
     canonical_event_json,
@@ -177,6 +178,22 @@ class SqliteAccountingStore:
             hedge_liquidation,
         )
 
+    async def append_events_and_snapshot(
+        self,
+        events: tuple[AccountingEvent, ...],
+        state: CombinedLedgerState,
+        *,
+        hedge_mark: Price | None = None,
+        hedge_liquidation: Price | None = None,
+    ) -> tuple[int, ...]:
+        return await asyncio.to_thread(
+            self._append_events_and_snapshot,
+            events,
+            state,
+            hedge_mark,
+            hedge_liquidation,
+        )
+
     async def load_events_after(self, sequence: int) -> tuple[AccountingEvent, ...]:
         if sequence < 0:
             raise ValueError("accounting event sequence cannot be negative")
@@ -237,6 +254,35 @@ class SqliteAccountingStore:
                 hedge_liquidation,
             )
             return sequence
+
+    def _append_events_and_snapshot(
+        self,
+        events: tuple[AccountingEvent, ...],
+        state: CombinedLedgerState,
+        hedge_mark: Price | None,
+        hedge_liquidation: Price | None,
+    ) -> tuple[int, ...]:
+        if not events:
+            return ()
+        with self._connect() as connection:
+            sequences: list[int] = []
+            inserted: list[tuple[int, AccountingEvent]] = []
+            for event in events:
+                sequence, created = self._insert_event(connection, event)
+                sequences.append(sequence)
+                if created:
+                    inserted.append((sequence, event))
+            if not inserted:
+                return tuple(sequences)
+            persisted = _load_events(connection, 0)
+            for sequence, event in inserted:
+                _write_event_detail(connection, sequence, event)
+                _write_projection(connection, sequence, state)
+            _write_snapshot(
+                connection, max(sequence for sequence, _ in inserted), persisted,
+                state, hedge_mark, hedge_liquidation,
+            )
+            return tuple(sequences)
 
     def _insert_event(
         self,
@@ -569,6 +615,16 @@ def _write_event_detail(
         connection.execute(
             "INSERT INTO recovery_allocations(event_sequence, amount, reason) VALUES (?, ?, ?)",
             (sequence, str(event.actual_recovery_allocation.value), event.reason),
+        )
+    elif isinstance(event, RecoveryAllocationRecorded) and event.allocated_amount.value:
+        connection.execute(
+            "INSERT INTO recovery_allocations(event_sequence, amount, reason) VALUES (?, ?, ?)",
+            (
+                sequence,
+                str(event.allocated_amount.value),
+                f"actual recovery allocation:{event.target.cycle_id}:"
+                f"{event.target.level_id}:{event.target.attempt}",
+            ),
         )
 
 

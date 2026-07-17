@@ -22,12 +22,14 @@ from eth_credit_hedge.domain.accounting.events import (
     AccountingEvent,
     AccountingSnapshotCreated,
     EventSource,
+    ExitReason,
     FundingRecorded,
     HedgeExecutionRecorded,
     HedgeRole,
     OptionExecutionRecorded,
     PositionReconciled,
-    RecoveryDebtChanged,
+    RecoveryAllocationRecorded,
+    RecoveryDebtIncremented,
 )
 from eth_credit_hedge.domain.accounting.errors import (
     DuplicateAccountingIdentifierError,
@@ -36,6 +38,7 @@ from eth_credit_hedge.domain.accounting.reconstruction import (
     CombinedLedgerReconstructor,
     CombinedLedgerState,
 )
+from eth_credit_hedge.domain.accounting.recovery_projection import HedgeAttemptKey
 from eth_credit_hedge.domain.strategy_math.units import Money, Price, Quantity
 from eth_credit_hedge.domain.execution import ExecutionUpdateBatch
 from eth_credit_hedge.ports.accounting_persistence import AccountingLedgerPersistencePort
@@ -265,35 +268,29 @@ class AccountingRuntime:
     ) -> CombinedLedgerState:
         if valuation is not None:
             self._valuation = valuation
-        for event in events:
-            candidate = (*self._events, event)
-            state = self._reconstruct(candidate)
-            await self._store.append_event_and_snapshot(
-                event,
-                state,
-                hedge_mark=self._valuation.hedge_mark,
-                hedge_liquidation=self._valuation.hedge_liquidation,
-            )
-            self._events = await self._store.load_events_after(0)
+        record_events, state = self._with_generated_recovery_debt(events)
+        await self._store.append_events_and_snapshot(
+            record_events,
+            state,
+            hedge_mark=self._valuation.hedge_mark,
+            hedge_liquidation=self._valuation.hedge_liquidation,
+        )
+        self._events = await self._store.load_events_after(0)
         self._state = self._reconstruct(self._events)
         return self._state
 
     async def _settle_closed_recovery_lots(self) -> CombinedLedgerState:
         recorded_ids = {event.event_id for event in self._events}
+        settlements: list[RecoveryAllocationRecorded] = []
         for lot in self._state.hedge.lots:
-            event_id = f"recovery-settlement:{lot.lot_id}"
             if (
                 lot.role is not HedgeRole.RECOVERY
                 or lot.open_quantity > Decimal("0")
                 or lot.net_realized_pnl.value <= Decimal("0")
-                or event_id in recorded_ids
                 or self._state.confirmed_recovery_debt.value <= Decimal("0")
             ):
                 continue
-            allocation = min(
-                lot.net_realized_pnl.value,
-                self._state.confirmed_recovery_debt.value,
-            )
+            available = lot.net_realized_pnl.value
             timestamps = tuple(
                 event.timestamp
                 for event in self._events
@@ -302,22 +299,105 @@ class AccountingRuntime:
             )
             if not timestamps:
                 raise AssertionError("closed recovery lot has no executions")
-            await self.record_system_event(
-                RecoveryDebtChanged(
-                    event_id=event_id,
-                    event_version=1,
+            for projection in self._state.recovery_level_projections:
+                if (
+                    projection.cycle_id != lot.cycle_id
+                    or projection.level_id != lot.level_id
+                ):
+                    continue
+                for attempt in projection.attempt_projections:
+                    if available <= Decimal("0") or attempt.remaining_debt.value <= Decimal("0"):
+                        continue
+                    event_id = (
+                        "recovery-allocation:"
+                        f"{lot.lot_id}:{attempt.key.cycle_id}:"
+                        f"{attempt.key.level_id}:{attempt.key.attempt}"
+                    )
+                    if event_id in recorded_ids:
+                        continue
+                    allocation = min(available, attempt.remaining_debt.value)
+                    settlements.append(
+                        RecoveryAllocationRecorded(
+                            event_id=event_id,
+                            event_version=2,
+                            cycle_id=lot.cycle_id,
+                            timestamp=max(timestamps),
+                            source=EventSource.SYSTEM,
+                            correlation_id=lot.lot_id,
+                            level_id=lot.level_id,
+                            target=attempt.key,
+                            recovery_hedge_lot_id=lot.lot_id,
+                            gross_realized_recovery_profit=lot.gross_realized_pnl,
+                            fees=Money(lot.entry_fees.value + lot.exit_fees.value),
+                            funding=lot.allocated_funding,
+                            allocated_amount=Money(allocation),
+                        )
+                    )
+                    available -= allocation
+                    recorded_ids.add(event_id)
+        if settlements:
+            return await self._record(tuple(settlements), None)
+        return self._state
+
+    def _with_generated_recovery_debt(
+        self,
+        events: tuple[AccountingEvent, ...],
+    ) -> tuple[tuple[AccountingEvent, ...], CombinedLedgerState]:
+        candidate = (*self._events, *events)
+        state = self._reconstruct(candidate)
+        generated = self._recovery_debt_increments(candidate, state)
+        if not generated:
+            return events, state
+        combined = (*events, *generated)
+        return combined, self._reconstruct((*self._events, *combined))
+
+    def _recovery_debt_increments(
+        self,
+        events: tuple[AccountingEvent, ...],
+        state: CombinedLedgerState,
+    ) -> tuple[RecoveryDebtIncremented, ...]:
+        recorded_lots = {
+            event.source_hedge_lot_id
+            for event in events
+            if isinstance(event, RecoveryDebtIncremented)
+        }
+        increments: list[RecoveryDebtIncremented] = []
+        for lot in state.hedge.lots:
+            if lot.debt_increment.value <= Decimal("0") or lot.lot_id in recorded_lots:
+                continue
+            stop_events = tuple(
+                event
+                for event in events
+                if isinstance(event, HedgeExecutionRecorded)
+                and event.lot_id == lot.lot_id
+                and event.exit_reason is ExitReason.STOP
+            )
+            stop_execution_ids = tuple(
+                event.execution.execution_id
+                for event in stop_events
+            )
+            if not stop_execution_ids:
+                raise AssertionError("stopped hedge lot has no stop executions")
+            target = HedgeAttemptKey(lot.cycle_id, lot.level_id, lot.attempt)
+            increments.append(
+                RecoveryDebtIncremented(
+                    event_id=(
+                        "recovery-debt:"
+                        f"{lot.cycle_id}:{lot.level_id}:{lot.attempt}:{lot.lot_id}"
+                    ),
+                    event_version=2,
                     cycle_id=lot.cycle_id,
-                    timestamp=max(timestamps),
+                    timestamp=max(event.timestamp for event in stop_events),
                     source=EventSource.SYSTEM,
                     correlation_id=lot.lot_id,
                     level_id=lot.level_id,
-                    increment=Money(Decimal("0")),
-                    actual_recovery_allocation=Money(allocation),
-                    reason="actual net realized recovery profit",
+                    target=target,
+                    source_hedge_lot_id=lot.lot_id,
+                    source_stop_execution_ids=stop_execution_ids,
+                    amount=lot.debt_increment,
                 )
             )
-            recorded_ids.add(event_id)
-        return self._state
+        return tuple(increments)
 
     def _reconstruct(self, events: tuple[AccountingEvent, ...]) -> CombinedLedgerState:
         return self._reconstructor.reconstruct(

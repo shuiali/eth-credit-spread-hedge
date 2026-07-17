@@ -209,7 +209,6 @@ class HedgeLedger:
         self.lots: dict[str, HedgeLotLedger] = {}
         self._executions: dict[str, tuple[object, ...]] = {}
         self._funding: dict[str, tuple[tuple[object, ...], tuple[FundingAllocation, ...]]] = {}
-        self.confirmed_recovery_debt = ZERO
 
     @classmethod
     def replay(
@@ -321,7 +320,9 @@ class HedgeLedger:
             hedge_fees=Money(sum((lot.entry_fees + lot.exit_fees for lot in self.lots.values()), ZERO)),
             funding_pnl=Money(sum((lot.funding_pnl for lot in self.lots.values()), ZERO)),
             slippage_attribution=Money(sum((lot.slippage_attribution for lot in self.lots.values()), ZERO)),
-            confirmed_recovery_debt=Money(self.confirmed_recovery_debt),
+            confirmed_recovery_debt=Money(
+                sum((lot.debt_increment for lot in self.lots.values()), ZERO)
+            ),
             mark_open_value=Money(mark_value),
             liquidation_open_value=Money(liquidation_value),
         )
@@ -331,5 +332,4 @@ class HedgeLedger:
             return
         if lot.stop_occurred:
             lot.debt_increment = max(-lot.net_realized_pnl, ZERO)
-            self.confirmed_recovery_debt += lot.debt_increment
         lot.finalized = True

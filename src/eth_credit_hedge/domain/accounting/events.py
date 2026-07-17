@@ -30,6 +30,7 @@ class EventSource(str, Enum):
     REST_RECOVERY = "REST_RECOVERY"
     MIGRATION = "MIGRATION"
     SYSTEM = "SYSTEM"
+    LEGACY_DEBT_MIGRATION = "LEGACY_DEBT_MIGRATION"
 
 
 class OptionLeg(str, Enum):

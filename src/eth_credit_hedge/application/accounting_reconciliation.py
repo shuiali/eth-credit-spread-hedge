@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Protocol
 
-from eth_credit_hedge.domain.accounting.events import MigratedFromLegacySnapshot
+from eth_credit_hedge.domain.accounting.events import (
+    AccountingEvent,
+    EventSource,
+    ExitReason,
+    HedgeExecutionRecorded,
+    HedgeRole,
+    MigratedFromLegacySnapshot,
+    RecoveryAllocationRecorded,
+    RecoveryDebtChanged,
+    RecoveryDebtIncremented,
+)
+from eth_credit_hedge.domain.accounting.recovery_projection import HedgeAttemptKey
+from eth_credit_hedge.domain.strategy_math.units import Money
 from eth_credit_hedge.domain.accounting.reconciliation import (
     AccountingExchangeState,
     AccountingReconciliationReport,
@@ -111,5 +124,117 @@ class LegacyAccountingMigrator:
             state,
             hedge_mark=None,
             hedge_liquidation=None,
+        )
+        return state
+
+
+class LegacyRecoveryDebtMigrator:
+    """One-way v1 implicit-stop-debt to v2 keyed-event migration."""
+
+    def __init__(
+        self, *, store: AccountingLedgerPersistencePort, reconstructor: CombinedLedgerReconstructor
+    ) -> None:
+        self._store = store
+        self._reconstructor = reconstructor
+
+    async def migrate(self) -> CombinedLedgerState:
+        events = await self._store.load_events_after(0)
+        if any(isinstance(event, RecoveryDebtIncremented) for event in events):
+            return self._reconstructor.reconstruct(events)
+        legacy = self._reconstructor.reconstruct(events)
+        additions: list[AccountingEvent] = []
+        seen_targets: set[HedgeAttemptKey] = set()
+        for lot in legacy.hedge.lots:
+            if lot.debt_increment.value == 0:
+                continue
+            target = HedgeAttemptKey(lot.cycle_id, lot.level_id, lot.attempt)
+            if target in seen_targets:
+                raise RuntimeError("ambiguous legacy recovery debt ownership")
+            seen_targets.add(target)
+            source = tuple(
+                event.execution_id for event in events
+                if isinstance(event, HedgeExecutionRecorded) and event.lot_id == lot.lot_id
+                and event.exit_reason is ExitReason.STOP
+                and event.execution_id is not None
+            )
+            if not source:
+                raise RuntimeError("legacy stopped lot has no execution ownership")
+            finalization = f"hedge-finalized:{lot.lot_id}"
+            additions.append(RecoveryDebtIncremented(
+                event_id=(f"recovery-debt:{lot.cycle_id}:{lot.level_id}:{lot.attempt}:{finalization}"),
+                event_version=2, cycle_id=lot.cycle_id, level_id=lot.level_id,
+                timestamp=legacy.as_of, source=EventSource.LEGACY_DEBT_MIGRATION,
+                correlation_id=finalization,
+                target=target,
+                source_hedge_lot_id=lot.lot_id, source_stop_execution_ids=source,
+                amount=lot.debt_increment,
+            ))
+        legacy_allocations = tuple(
+            event
+            for event in events
+            if isinstance(event, RecoveryDebtChanged)
+            and event.actual_recovery_allocation.value > 0
+        )
+        debt_additions = tuple(
+            event for event in additions if isinstance(event, RecoveryDebtIncremented)
+        )
+        if legacy_allocations and len(debt_additions) != 1:
+            raise RuntimeError("ambiguous legacy recovery allocation ownership")
+        if legacy_allocations:
+            target = debt_additions[0].target
+            recovery_lots = tuple(
+                lot
+                for lot in legacy.hedge.lots
+                if lot.role is HedgeRole.RECOVERY
+                and lot.level_id == target.level_id
+                and lot.net_realized_pnl.value > 0
+            )
+            if len(recovery_lots) != 1:
+                raise RuntimeError("ambiguous legacy recovery allocation ownership")
+            recovery_lot = recovery_lots[0]
+            for allocation in legacy_allocations:
+                additions.append(
+                    RecoveryAllocationRecorded(
+                        event_id=(
+                            "recovery-allocation-migration:"
+                            f"{allocation.event_id}:{target.cycle_id}:"
+                            f"{target.level_id}:{target.attempt}"
+                        ),
+                        event_version=2,
+                        cycle_id=target.cycle_id,
+                        level_id=target.level_id,
+                        timestamp=allocation.timestamp,
+                        source=EventSource.LEGACY_DEBT_MIGRATION,
+                        correlation_id=allocation.event_id,
+                        target=target,
+                        recovery_hedge_lot_id=recovery_lot.lot_id,
+                        gross_realized_recovery_profit=recovery_lot.gross_realized_pnl,
+                        fees=Money(
+                            recovery_lot.entry_fees.value
+                            + recovery_lot.exit_fees.value
+                        ),
+                        funding=recovery_lot.allocated_funding,
+                        allocated_amount=allocation.actual_recovery_allocation,
+                    )
+                )
+        if not additions:
+            return legacy
+        marker = MigratedFromLegacySnapshot(
+            event_id="legacy-recovery-debt-migration:v2",
+            event_version=2,
+            cycle_id="legacy-recovery-debt",
+            timestamp=legacy.as_of,
+            source=EventSource.LEGACY_DEBT_MIGRATION,
+            correlation_id="legacy-recovery-debt-migration:v2",
+            legacy_snapshot_type="RecoveryDebt",
+            legacy_snapshot_key="implicit-stopped-hedge-lots",
+            legacy_payload_digest=hashlib.sha256(
+                "|".join(event.event_id for event in additions).encode("utf-8")
+            ).hexdigest(),
+        )
+        migration_events = (marker, *additions)
+        state = self._reconstructor.reconstruct((*events, *migration_events))
+        await self._store.append_events_and_snapshot(
+            migration_events, state, hedge_mark=None, hedge_liquidation=None,
         )
         return state

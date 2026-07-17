@@ -15,6 +15,7 @@ import pytest
 from eth_credit_hedge.application.accounting_reconciliation import (
     AccountingReconciliationService,
     LegacyAccountingMigrator,
+    LegacyRecoveryDebtMigrator,
 )
 from eth_credit_hedge.domain.accounting.errors import DuplicateAccountingIdentifierError
 from eth_credit_hedge.domain.accounting.events import (
@@ -23,6 +24,8 @@ from eth_credit_hedge.domain.accounting.events import (
     HedgeExecutionRecorded,
     MigratedFromLegacySnapshot,
     OptionExecutionRecorded,
+    RecoveryAllocationRecorded,
+    RecoveryDebtIncremented,
     event_from_dict,
 )
 from eth_credit_hedge.domain.accounting.reconciliation import (
@@ -96,6 +99,36 @@ def test_atomic_event_projection_and_snapshot_rollback(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
+def test_atomic_multi_event_batch_rolls_back_together(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        database = tmp_path / "accounting.sqlite3"
+        store = SqliteAccountingStore(database)
+        await store.initialize()
+        events = _events("m2_4_option_quotes.jsonl")[:2]
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                """
+                CREATE TRIGGER fail_accounting_snapshot_batch
+                BEFORE INSERT ON accounting_snapshots
+                BEGIN
+                    SELECT RAISE(ABORT, 'snapshot failure');
+                END
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="snapshot failure"):
+            await store.append_events_and_snapshot(
+                events,
+                CombinedLedgerReconstructor().reconstruct(events),
+                hedge_mark=None,
+                hedge_liquidation=None,
+            )
+        assert await store.load_events_after(0) == ()
+        with sqlite3.connect(database) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM reference_prices").fetchone()[0] == 0
+
+    asyncio.run(exercise())
+
+
 def test_duplicates_recovery_funding_and_restart_replay_are_exact(tmp_path: Path) -> None:
     async def exercise() -> None:
         database = tmp_path / "accounting.sqlite3"
@@ -146,6 +179,62 @@ def test_duplicates_recovery_funding_and_restart_replay_are_exact(tmp_path: Path
             assert connection.execute("SELECT COUNT(*) FROM fee_records").fetchone()[0] == 6
             assert connection.execute("SELECT COUNT(*) FROM recovery_allocations").fetchone()[0] == 1
             assert connection.execute("SELECT COUNT(*) FROM reference_prices").fetchone()[0] == 7
+
+    asyncio.run(exercise())
+
+
+def test_legacy_recovery_debt_migration_is_explicit_keyed_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        database = tmp_path / "accounting.sqlite3"
+        events = (*_events("m2_4_option_quotes.jsonl"), *_events("m2_4_combined_events.jsonl"))
+        store = SqliteAccountingStore(database)
+        await store.initialize()
+        await _persist(store, events)
+
+        before = (await store.replay(CombinedLedgerReconstructor())).state
+        migrated = await LegacyRecoveryDebtMigrator(
+            store=store,
+            reconstructor=CombinedLedgerReconstructor(),
+        ).migrate()
+        after_events = await store.load_events_after(0)
+        increments = tuple(
+            event
+            for event in after_events
+            if isinstance(event, RecoveryDebtIncremented)
+        )
+        allocations = tuple(
+            event
+            for event in after_events
+            if isinstance(event, RecoveryAllocationRecorded)
+        )
+        markers = tuple(
+            event
+            for event in after_events
+            if isinstance(event, MigratedFromLegacySnapshot)
+            and event.event_id == "legacy-recovery-debt-migration:v2"
+        )
+
+        assert migrated.confirmed_recovery_debt == before.confirmed_recovery_debt
+        assert migrated.debt_increments == before.debt_increments
+        assert migrated.actual_recovery_allocations == before.actual_recovery_allocations
+        assert len(markers) == 1
+        assert markers[0].source is EventSource.LEGACY_DEBT_MIGRATION
+        assert len(increments) == 1
+        assert increments[0].source is EventSource.LEGACY_DEBT_MIGRATION
+        assert increments[0].source_stop_execution_ids == ("base-stop-fill",)
+        assert len(allocations) == 1
+        assert allocations[0].target == increments[0].target
+        assert migrated.debt_for_attempt(increments[0].target) == Money(D("4"))
+
+        event_count = len(after_events)
+        repeated = await LegacyRecoveryDebtMigrator(
+            store=store,
+            reconstructor=CombinedLedgerReconstructor(),
+        ).migrate()
+        assert repeated.ledger_digest == migrated.ledger_digest
+        assert len(await store.load_events_after(0)) == event_count
 
     asyncio.run(exercise())
 
